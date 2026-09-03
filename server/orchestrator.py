@@ -574,7 +574,7 @@ def _wav(pcm: bytes, sr: int) -> bytes:
 _SENT = re.compile(r"(?<=[.!?…])\s+")
 
 
-def _chunks(text: str, max_len: int = 220, min_len: int = 40) -> list[str]:
+def _chunks(text: str, max_len: int = 400, min_len: int = 40) -> list[str]:
     """Split long text at sentence ends into generation-sized chunks. Short text
     is one chunk. Tiny trailing fragments are merged into their neighbour."""
     text = text.strip()
@@ -709,41 +709,28 @@ def _join_parts(parts: list, sr: int, gaps=None) -> bytes:
     fades; gaps[i] is the director's pause after part i."""
     if len(parts) == 1:
         return parts[0]
-    gaps = list(gaps or []) + [0.18] * len(parts)
+    gaps = list(gaps or []) + [0.25] * len(parts)
     w = int(sr * 0.02) * 2
     out = elongation._ramp(parts[0], w, rising=False)
     for i, nxt in enumerate(parts[1:]):
-        t = max(0.0, len(out) / (2 * sr) - 0.05)
-        out += elongation._room_tone(out, sr, t, int(max(0.1, gaps[i]) * sr))
+        out += b"\x00\x00" * int(max(0.1, gaps[i]) * sr)
         out += elongation._ramp(elongation._ramp(nxt, w, True), w, False)
     return out
 
 
 def _plan_parts(text: str, mode_key: str, modes=None, pauses=None) -> list:
-    """Split the line into parts. A new part starts where the director changes
-    the mode OR asks for a pause (a deliberate pause is also where a seam is
-    inaudible). Returns [(chunk_text, mode, gap_after_seconds)]."""
+    """ONE generation per line. The director's pauses become the model's own
+    inline pause tokens (rendered natively — no seams, no joins); the register
+    is one mode for the whole line. Only very long text is chunked."""
     sents = [x.strip() for x in _SENT.split(text) if x.strip()]
-    if not modes or len(modes) != len(sents):
-        return [(c, mode_key, 0.18) for c in _chunks(text)]
-    pauses = list(pauses or []) + ["none"] * len(sents)
-    gap_of = {"none": 0.18, "short": 0.5, "long": 1.0}
-    groups, cur, curm = [], [], (modes[0] if modes[0] in MODES else mode_key)
-    for i, (x, mk) in enumerate(zip(sents, modes)):
-        mk = mk if mk in MODES else mode_key
-        if cur and (mk != curm or pauses[i - 1] != "none"):
-            groups.append((" ".join(cur), curm, gap_of.get(pauses[i - 1], 0.18)))
-            cur = []
-        cur.append(x)
-        curm = mk
-    if cur:
-        groups.append((" ".join(cur), curm, gap_of.get(pauses[len(sents) - 1], 0.18)))
-    out = []
-    for t, mk, gap in groups:
-        cs = _chunks(t)
-        for j, c in enumerate(cs):
-            out.append((c, mk, gap if j == len(cs) - 1 else 0.18))
-    return out
+    pauses = list(pauses or [])
+    if len(pauses) == len(sents) and any(pz != "none" for pz in pauses):
+        tok = {"short": " <|prosody:pause|> ", "long": " <|prosody:long_pause|> "}
+        joined = ""
+        for i, x in enumerate(sents):
+            joined += x + (tok.get(pauses[i], " ") if i < len(sents) - 1 else "")
+        text = " ".join(joined.split())
+    return [(c, mode_key, 0.25) for c in _chunks(text)]
 
 
 def _render(text: str, voice_key: str, mode_key: str,
@@ -779,6 +766,9 @@ def _render(text: str, voice_key: str, mode_key: str,
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
     plan = _plan_parts(text, mode_key, modes, pauses)
+    lvl = max([("none", "short", "long").index(pz) for pz in (pauses or []) if pz in ("none", "short", "long")]
+              or [0])
+    pause_floor = {0: 0.0, 1: 0.5, 2: 0.9}[lvl]      # keep the director's pauses
     offs, off = [], 0                          # sentence offsets per part (director paces)
     for chunk, _, _ in plan:
         offs.append(off)
@@ -830,7 +820,7 @@ def _render(text: str, voice_key: str, mode_key: str,
                                         (paces or [])[offs[idx]:offs[idx] + n_s],
                                         TEMPO_TARGET.get(tempo or 0, 1.0), tempo or 0)
         # clamp this part's own internal pauses; director gaps are added at the join
-        pcm = _trim(pcm, sr, MODE_PAUSE.get(part_mode, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0))
+        pcm = _trim(pcm, sr, max(pause_floor, MODE_PAUSE.get(part_mode, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0)))
         return {"pcm": pcm, "sr": sr, "meta": cmeta, "applied": applied, "f": f, "r": r,
                 "mode": part_mode, "gap": gap_after}
 
@@ -1226,27 +1216,23 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
     if _is_en(lang):
         sysm = ("You are the voice director for a D&D character voice. Choose ONE delivery mode "
                 "for the whole line from: " + ", ".join(f"{k} ({v['desc']})" for k, v in MODES.items())
-                + ". For each numbered sentence give a mode, a pace and a pause after it. Keep the "
-                "SAME mode unless the content genuinely shifts (a greeting can be friendly, a "
-                "question businesslike, a result happy); typically one or two modes per line, "
-                "never more than three, no flip-flopping. Vary the pace freely (slow, normal, "
-                "fast). pause = none, short (a beat) or long (a real pause) — use pauses where a "
-                "speaker would actually stop, between thoughts. Also give an overall tempo for the "
-                "line as an integer from -2 (very slow, heavy) to 2 (rushed). Reply ONLY with JSON: "
-                "{\"sentences\": [{\"mode\": \"friendly\", \"pace\": \"fast\", \"pause\": \"short\"}, ...], "
-                "\"tempo\": 0} with exactly one entry per sentence.")
+                + ". Choose ONE mode for the whole line (the register the character speaks the "
+                "whole line in) and repeat it for every sentence. Per sentence give a pace (slow, "
+                "normal, fast) and a pause after it: none, short (a beat) or long (a real pause) — "
+                "where a speaker would actually stop, between thoughts. Also give an overall tempo "
+                "for the line as an integer from -2 (very slow, heavy) to 2 (rushed). Reply ONLY "
+                "with JSON: {\"sentences\": [{\"mode\": \"friendly\", \"pace\": \"fast\", \"pause\": "
+                "\"short\"}, ...], \"tempo\": 0} with exactly one entry per sentence.")
     else:
         sysm = ("Si hlasový režisér pre postavu z D&D. Vyber JEDEN spôsob podania celej repliky z: "
                 + ", ".join(f"{k} ({DIRECTOR_MODES_SK[k]})" for k in MODES)
-                + ". Pre každú očíslovanú vetu uveď spôsob podania, tempo a pauzu po nej. Spôsob "
-                "podania NEMEŇ, pokiaľ sa obsah naozaj nezmení (privítanie môže byť friendly, otázka "
-                "business, výsledok happy); zvyčajne jeden až dva spôsoby na repliku, nikdy viac ako "
-                "tri, žiadne preskakovanie. Tempo meň voľne (slow, normal, fast). pause = none, "
-                "short (krátka pauza) alebo long (skutočná pauza) — tam, kde by sa hovoriaci naozaj "
-                "zastavil, medzi myšlienkami. Uveď aj celkové tempo repliky ako celé číslo od -2 "
-                "(veľmi pomaly) po 2 (rýchlo). Odpovedz IBA JSON: {\"sentences\": [{\"mode\": "
-                "\"friendly\", \"pace\": \"fast\", \"pause\": \"short\"}, ...], \"tempo\": 0} — presne "
-                "jeden záznam na vetu.")
+                + ". Vyber JEDEN spôsob podania pre celú repliku (register, v ktorom postava povie "
+                "celú repliku) a zopakuj ho pri každej vete. Pri každej vete uveď tempo (slow, normal, "
+                "fast) a pauzu po nej: none, short (krátka) alebo long (skutočná pauza) — tam, kde by "
+                "sa hovoriaci naozaj zastavil, medzi myšlienkami. Uveď aj celkové tempo repliky ako "
+                "celé číslo od -2 (veľmi pomaly) po 2 (rýchlo). Odpovedz IBA JSON: {\"sentences\": "
+                "[{\"mode\": \"friendly\", \"pace\": \"fast\", \"pause\": \"short\"}, ...], \"tempo\": 0} "
+                "— presne jeden záznam na vetu.")
     sysm = _with_scene(sysm, scene, lang)
     user = "\n".join(f"{i + 1}. {x}" for i, x in enumerate(sents)) or text
     try:
@@ -1260,10 +1246,7 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
         modes = [m or fill for m in modes] + [fill] * (len(sents) - len(modes))
         paces += ["normal"] * (len(sents) - len(paces))
         mode = max(set(modes), key=modes.count) if modes else DEFAULT_MODE
-        # at most three registers per line: fold the rarest extras into the main one
-        while len(set(modes)) > 3:
-            rare = min(set(modes), key=modes.count)
-            modes = [mode if m == rare else m for m in modes]
+        modes = [mode] * len(sents)          # one register: one generation, one person
         pauses = [(r.get("pause") if isinstance(r, dict) and r.get("pause") in ("none", "short", "long")
                    else "none") for r in rows][:len(sents)]
         pauses += ["none"] * (len(sents) - len(pauses))

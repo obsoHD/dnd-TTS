@@ -86,6 +86,13 @@ def parse_marks(text: str):
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if text.startswith("<|", i):                 # control token: keep verbatim, not a word
+            j = text.find("|>", i)
+            if j != -1:
+                flush()
+                disp.append(" " + text[i:j + 2] + " ")
+                i = j + 2
+                continue
         if c == "*":
             j = i
             while j < n and text[j] == "*":
