@@ -99,9 +99,14 @@ def parse_marks(text: str):
                 j += 1
             stars = min(j - i, MAX_STARS)
             if cur and cur[-1] in _VOWELS:
-                # clean spelling for the model (repeated letters are out of its
-                # distribution); the hold is made in post, pitch-synchronously
-                marks.append((len(aligner_words), len(cur) - 1, 1, stars))
+                # the model PERFORMS the drawl (vowel repeated in the spelling it
+                # sees: natural timbre and intonation); post only corrects the
+                # length modestly — synthesising a 5x hold sounds broken
+                extra = 1 if stars <= 2 else 2
+                first = len(cur) - 1
+                cur.extend([cur[-1]] * extra)
+                disp.extend([disp[-1]] * extra)
+                marks.append((len(aligner_words), first, 1 + extra, stars))
             i = j
             continue
         if c in BREAK_CHARS:
@@ -377,7 +382,7 @@ def elongate(pcm: bytes, sr: int, aligner_words, marks, breaks=None,
             continue                                       # already the right length
         # PSOLA on the vowel nucleus (pitch-synchronous; transitions untouched)
         n0, n1 = _nucleus(t0, t1)
-        factor = max(0.2, min(6.0, ((n1 - n0) + delta) / max(0.02, n1 - n0)))
+        factor = max(0.5, min(2.0, ((n1 - n0) + delta) / max(0.02, n1 - n0)))   # modest correction only
         res = _psola(pcm, sr, n0, n1, factor)
         if res is not None:
             a, b, new = res

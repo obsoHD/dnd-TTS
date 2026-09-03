@@ -278,7 +278,7 @@ MODES = {
                 "speed": 1.12, "space": "room", "beats": True,
                 "desc": "hyped, high-spirited, talking to his guy"},
     # dry mockery, deadpan. Deliberately flat delivery, but loaded.
-    "deadpan": {"lead": "<|emotion:bitterness|><|prosody:expressive_low|>",
+    "deadpan": {"lead": "<|emotion:bitterness|><|prosody:speed_fast|>",
                 "speed": 1.05, "space": "room", "beats": True,
                 "desc": "dry, deadpan mockery"},
     # gloating after saving the day — 'who saves the fucking day?'
@@ -317,7 +317,12 @@ MODES = {
                   "speed": 1.05, "space": "room", "beats": True, "desc": "disgusted, repulsed"},
     "awe":       {"lead": "<|emotion:awe|><|prosody:expressive_high|><|prosody:speed_slow|>",
                   "speed": 1.0, "space": "hall", "beats": True, "desc": "awestruck, hushed"},
+    # war cry: the documented shouting style, all in
+    "battlecry": {"lead": "<|style:shouting|><|emotion:determination|><|prosody:expressive_high|><|prosody:speed_fast|>",
+                  "speed": 1.05, "space": "hall", "beats": False, "desc": "war cry — shouted, all in"},
 }
+# shouting raises pitch: let the gate accept a higher ceiling for these modes
+MODE_BAND_HI = {"battlecry": 1.3, "pissed": 1.15, "panic": 1.15}
 DEFAULT_MODE = "bro"
 
 # Target ARTICULATION rate per delivery mode, syllables/sec over speech-only
@@ -325,9 +330,10 @@ DEFAULT_MODE = "bro"
 # no published figure; Czech is the accepted proxy), slow/menacing 3.5-4.5,
 # hyped/furious/panic 6.5-7.5; English runs ~15% lower. Words/sec was wrong for
 # Slovak's long words and pinned every line at the cap.
-MODE_SPS = {"bro": 7.0, "deadpan": 6.0, "smug": 6.2, "pissed": 7.2,
+MODE_SPS = {"bro": 7.0, "deadpan": 6.4, "smug": 6.2, "pissed": 7.2,
             "menace": 4.8, "panic": 7.4, "soft": 4.8, "friendly": 6.2, "business": 6.0,
-            "happy": 6.8, "curious": 6.2, "sad": 4.8, "disgusted": 6.0, "awe": 4.8}
+            "happy": 6.8, "curious": 6.2, "sad": 4.8, "disgusted": 6.0, "awe": 4.8,
+            "battlecry": 7.0}
 EN_RATE_SCALE = 0.85
 _VOW = "aeiouyáéíóúýäô"
 _SYL_DIPH = re.compile(r"i[aeu]|ô")
@@ -464,7 +470,8 @@ def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
 # menacing/soft modes are allowed to breathe
 MODE_PAUSE = {"bro": 0.30, "deadpan": 0.35, "smug": 0.32, "pissed": 0.28,
               "menace": 0.50, "panic": 0.25, "soft": 0.45, "friendly": 0.32, "business": 0.35,
-              "happy": 0.30, "curious": 0.35, "sad": 0.50, "disgusted": 0.35, "awe": 0.50}
+              "happy": 0.30, "curious": 0.35, "sad": 0.50, "disgusted": 0.35, "awe": 0.50,
+              "battlecry": 0.22}
 
 
 def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4, internal: bool = True) -> bytes:
@@ -658,7 +665,7 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
                     break
         syl = _syllables(s.replace("*", ""))
         speech = _speech_seconds(seg.tobytes(), sr) - held
-        if syl < 3 or speech < 0.4:                # too short to measure reliably
+        if held > 0 or syl < 3 or speech < 0.4:    # drawl sentences keep their pace; short ones unmeasurable
             f, sps = 1.0, 0.0
         else:
             sps = syl / speech
@@ -779,6 +786,8 @@ def _render(text: str, voice_key: str, mode_key: str,
     def render_part(idx: int, seed_hint, want: int, extra_refs=None):
         chunk, part_mode, gap_after = plan[idx]
         lead = _lead_for(part_mode)
+        vv = dict(v)
+        vv["band"] = (v["band"][0], int(v["band"][1] * MODE_BAND_HI.get(part_mode, 1.0)))
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
             return None
@@ -786,8 +795,8 @@ def _render(text: str, voice_key: str, mode_key: str,
         est = (_syllables(_spoken(clean)) / 4.5 + sum(m[3] for m in marks) * 0.15
                + 0.6 * clean.count("<|prosody:") + 1.0)
         max_tokens = max(150, min(900, int(est * 25 * 1.6) + 60))
-        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, want, extra_refs)
-        lo, hi = v["band"]
+        cands = voice_gen(_place_tags(lead, clean), vv, max_tokens, seed_hint, want, extra_refs)
+        lo, hi = vv["band"]
         mid = (lo + hi) / 2
         exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(part_mode, 5.4)
                                                  * (EN_RATE_SCALE if _is_en(lang) else 1.0))
@@ -807,7 +816,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         (sc, cer), (pcm, sr, cmeta) = min(scored, key=lambda t: t[0][0])
         if ASR_GATE and cer > ASR_CER_MAX and len(scored) < 3:   # still garbled: one more take
             alt = ((cmeta.get("accepted_seed") or 0) + 3) % MAX_TRIES
-            for c in voice_gen(_place_tags(lead, clean), v, max_tokens, alt, 1):
+            for c in voice_gen(_place_tags(lead, clean), vv, max_tokens, alt, 1):
                 sc2, cer2 = _score(c)
                 if sc2 < sc:
                     (sc, cer), (pcm, sr, cmeta) = (sc2, cer2), c
@@ -1271,7 +1280,7 @@ def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
     return {"voice": voice, "lang": key, "types": types[key]}
 
 
-PACE_MULT = {"slow": 0.94, "normal": 1.0, "fast": 1.15}   # "slow" = less speed-up, never slower
+PACE_MULT = {"slow": 1.0, "normal": 1.0, "fast": 1.15}    # "slow" = no extra push, never slower
 # voice-speed context dial, -2 (very slow) .. +2 (rushed): sets the model's own
 # speed token, scales the pace target and the pause cap. The director sets it
 # when auto delivery is on.
@@ -1289,7 +1298,7 @@ DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "such
                      "soft": "neochotne úprimné, mäkké", "friendly": "priateľské, vrelé privítanie",
                      "business": "vecné, obchodné", "happy": "radostné, nadšené",
                      "curious": "zvedavé", "sad": "smutné, ťažké", "disgusted": "znechutené",
-                     "awe": "v úžase, stíšené"}
+                     "awe": "v úžase, stíšené", "battlecry": "bojový pokrik, kričané, do boja"}
 
 
 def _with_scene(persona: str, scene: str, lang: str) -> str:
@@ -1341,7 +1350,7 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
                    else "none") for r in rows][:len(sents)]
         pauses += ["none"] * (len(sents) - len(pauses))
         try:
-            tempo = max(-2, min(2, int(d.get("tempo", 0))))
+            tempo = max(0, min(2, int(d.get("tempo", 0))))   # never below normal
         except Exception:                               # noqa: BLE001
             tempo = 0
         return mode, paces, tempo, modes, pauses
