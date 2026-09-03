@@ -98,7 +98,7 @@
 
       <label>Text</label>
       <textarea id="text" placeholder="Napíš, čo má povedať…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
-      <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). <code>—</code> or <code>…</code> = a beat. <b>Fix text</b> cleans up Slovak typos and keeps your stars.</div>
+      <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). Press <code>TAB</code> (or type <code>—</code> / <code>…</code>) for a short break. <b>Fix text</b> cleans up typos and keeps your marks.</div>
 
       <div class="row">
         <div class="fld">
@@ -111,8 +111,11 @@
           </select>
         </div>
         <div class="fld">
-          <label>Speed · <span class="val" id="speedv">1.12×</span></label>
-          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12">
+          <label style="display:flex;justify-content:space-between;align-items:center">
+            <span>Speed · <span class="val" id="speedv">auto</span></span>
+            <span style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="auto" checked> auto</span>
+          </label>
+          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12" disabled>
         </div>
       </div>
 
@@ -158,9 +161,16 @@ $("modes").innerHTML = Object.keys(MODEDESC).map(k=>`<span class="pill${k==="bro
 $("modes").onclick=e=>{ if(e.target.dataset.k) setMode(e.target.dataset.k); };
 setMode("bro");
 
-// language toggle
+// language toggle — phrase labels follow it
 $("langs").onclick=e=>{ if(!e.target.dataset.l) return; lang=e.target.dataset.l;
-  [...$("langs").children].forEach(c=>c.classList.toggle("on",c.dataset.l===lang)); };
+  [...$("langs").children].forEach(c=>c.classList.toggle("on",c.dataset.l===lang)); loadPhrases(); };
+
+// speed: auto (adaptive, server-side) or manual slider
+const autoEl=$("auto");
+function syncSpeed(){ const a=autoEl.checked; $("speed").disabled=a;
+  $("speedv").textContent=a?"auto":(+$("speed").value).toFixed(2)+"×"; }
+autoEl.onchange=syncSpeed;
+function speedVal(){ return autoEl.checked?null:+$("speed").value; }
 
 // voices sidebar
 fetch("/voices").then(r=>r.json()).then(d=>{
@@ -174,7 +184,7 @@ $("voices").onclick=e=>{ const b=e.target.closest(".voice"); if(!b) return;
 
 // phrase board — click a type, the LLM improvises a fresh line for this voice
 function loadPhrases(){
-  fetch("/phrases?voice="+encodeURIComponent(voice)).then(r=>r.json()).then(d=>{
+  fetch("/phrases?voice="+encodeURIComponent(voice)+"&lang="+lang).then(r=>r.json()).then(d=>{
     $("phrases").innerHTML=(d.types||[]).map(t=>`<button class="ph">${t}</button>`).join("");
   }).catch(()=>{});
 }
@@ -194,7 +204,8 @@ $("phrases").onclick=async e=>{
   finally{ [...$("phrases").children].forEach(c=>c.disabled=false); }
 };
 
-$("speed").oninput=()=>$("speedv").textContent=(+$("speed").value).toFixed(2)+"×";
+$("speed").oninput=()=>{ if(!autoEl.checked) $("speedv").textContent=(+$("speed").value).toFixed(2)+"×"; };
+syncSpeed();
 
 let lastURL=null;
 function busy(b,msg){ ["go","fix","dl"].forEach(id=>$(id).disabled=b); if(b&&msg)$("status").textContent=msg; }
@@ -204,14 +215,14 @@ async function speak(){
   busy(true,"generating…"); $("dl").disabled=true; const t0=performance.now();
   try{
     const r=await fetch("/say",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text,voice,mode,speed:+$("speed").value,space:$("space").value})});
+      body:JSON.stringify({text,voice,mode,speed:speedVal(),space:$("space").value})});
     if(!r.ok) throw new Error("server "+r.status);
-    const hz=r.headers.get("X-Bag-Hz"), drawls=r.headers.get("X-Bag-Drawls");
+    const hz=r.headers.get("X-Bag-Hz"), drawls=r.headers.get("X-Bag-Drawls"), asp=r.headers.get("X-Bag-Speed");
     const blob=await r.blob();
     if(lastURL)URL.revokeObjectURL(lastURL); lastURL=URL.createObjectURL(blob);
     const a=$("audio"); a.src=lastURL; a.style.display="block"; a.play().catch(()=>{});
     $("status").textContent="done in "+((performance.now()-t0)/1000).toFixed(1)+"s";
-    $("meta").textContent="pitch "+hz+" Hz"+(drawls?" · drawls "+drawls:"");
+    $("meta").textContent="pitch "+hz+" Hz"+(asp?" · auto speed "+asp+"×":"")+(drawls?" · marks "+drawls:"");
     $("dl").disabled=false;
   }catch(e){ $("status").textContent="error: "+e.message; } finally{ ["go","fix"].forEach(id=>$(id).disabled=false); }
 }
@@ -226,7 +237,12 @@ async function fixText(){
 }
 $("go").onclick=speak; $("fix").onclick=fixText;
 $("dl").onclick=()=>{ if(!lastURL)return; const a=document.createElement("a"); a.href=lastURL; a.download=voice+".wav"; a.click(); };
-$("text").addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") speak(); });
+$("text").addEventListener("keydown",e=>{
+  if(e.key==="Tab"){ // TAB = a short break in the speech
+    e.preventDefault(); const t=$("text"), s=t.selectionStart, en=t.selectionEnd;
+    t.value=t.value.slice(0,s)+"\t"+t.value.slice(en); t.selectionStart=t.selectionEnd=s+1; return; }
+  if((e.metaKey||e.ctrlKey)&&e.key==="Enter") speak();
+});
 </script>
 </body>
 </html>

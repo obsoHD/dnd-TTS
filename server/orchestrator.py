@@ -46,6 +46,8 @@ LLM_URL = os.environ.get("BAG_LLM_URL", "http://127.0.0.1:11434")
 LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "llama3.1:8b-instruct-q8_0")
 STT_URL = os.environ.get("BAG_STT_URL", "https://127.0.0.1:8443/stt")
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
+# natural brisk dialogue pace the adaptive speed aims for (words per second)
+ADAPTIVE_TARGET_WPS = float(os.environ.get("BAG_TARGET_WPS", "2.9"))
 
 # --------------------------------------------------------------------- voices
 # Each voice is a reference clip + its transcript (transcript materially improves
@@ -69,23 +71,53 @@ SHOPKEEP_PERSONA = (
     "svoj tovar do nebies a smeješ sa vlastným vtipom. Odpovedaj KRÁTKO — jedna až "
     "tri vety hovorenej reči, bez odrážok ani javiskových poznámok.")
 
+# English personas. The prompt must be MONOLINGUAL per request — a Slovak system
+# prompt plus "answer in English" makes the small model blend languages.
+BAG_PERSONA_EN = (
+    "You are Bag (Mr. Bag) — a sentient, sarcastic, foul-mouthed magic item in a "
+    "Dungeons & Dragons game. INT 12, WIS 14, CHA 18. You speak English, crude and "
+    "funny, like an old buddy who comments on everything. You've been with your "
+    "owner since birth and pretend it annoys you, but you care. Answer SHORT — one "
+    "to three sentences of spoken dialogue, no bullet points or stage directions. "
+    "You never hand over 'the one item' — always refuse with 'Not that one.'")
+NPC_PERSONA_EN = (
+    "You are an NPC in a Dungeons & Dragons game. You speak English, briefly and "
+    "in character. Answer SHORT — one to three sentences of spoken dialogue, no "
+    "bullet points.")
+SHOPKEEP_PERSONA_EN = (
+    "You are a CRAZY, wildly enthusiastic merchant in a Dungeons & Dragons game. "
+    "You speak English — loud, theatrical and manic. You try to sell everything, "
+    "praise your wares to the skies and laugh at your own jokes. Answer SHORT — one "
+    "to three sentences of spoken dialogue, no bullet points or stage directions.")
+
+
+def _is_en(lang: str) -> bool:
+    return (lang or "sk").lower().startswith("en")
+
+
+def _persona(v: dict, lang: str) -> str:
+    return v["persona_en"] if _is_en(lang) else v["persona"]
+
 VOICES = {
     "bag":    {"ref": "/refs/bag_ref.wav", "label": "Mr. Bag (deep male)",
                "pitch": "<|prosody:pitch_low|>", "band": (60, 155),
-               "persona": BAG_PERSONA,
+               "persona": BAG_PERSONA, "persona_en": BAG_PERSONA_EN,
                "text": ("Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o "
                         "to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? "
                         "Možno je to zlodej, a možno nie. To je na tom vtipné.")},
     "male":   {"ref": "/refs/male-voice.wav", "label": "Adam (male)",
                "pitch": "", "band": (75, 185), "persona": NPC_PERSONA,
+               "persona_en": NPC_PERSONA_EN,
                "text": ("Hey, Adam here. Let's create something that feels real, "
                         "sounds human, and connects every time.")},
     "female": {"ref": "/refs/female-voice.wav", "label": "Clara (female)",
                "pitch": "", "band": (150, 290), "persona": NPC_PERSONA,
+               "persona_en": NPC_PERSONA_EN,
                "text": ("By repeating what students say, teachers can demonstrate "
                         "that they are listening. By extending what students say.")},
     "shopkeep": {"ref": "/refs/shopkeep_ref.wav", "label": "Crazy Shopkeep (male)",
                  "pitch": "", "band": (105, 255), "persona": SHOPKEEP_PERSONA,
+                 "persona_en": SHOPKEEP_PERSONA_EN,
                  "text": ("Why are you guys so anti-dictators? Imagine if America was "
                           "a dictatorship. You could let one percent of the people "
                           "have all the nation's wealth. You could help your rich "
@@ -98,15 +130,23 @@ DEFAULT_VOICE = "bag"
 # Phrase board: per-character situation types. Clicking one has the LLM improvise
 # a fresh in-character line of that type, then speaks it. Tuned per persona.
 PHRASE_TYPES = {
-    "bag": ["Pozdrav kámoša", "Urážka partie", "Chvastanie po záchrane",
-            "Odmietnutie predmetu", "Bojový pokrik", "Sarkastická poznámka",
-            "Namrzené povzbudenie", "Ten nie."],
-    "shopkeep": ["Vítanie zákazníka", "Tvrdý predaj", "Jednanie o cene",
-                 "Nehorázna cena", "Vychvaľovanie tovaru", "Zatváram krám",
-                 "Podozrivá ponuka"],
+    "bag": {"sk": ["Pozdrav kámoša", "Urážka partie", "Chvastanie po záchrane",
+                   "Odmietnutie predmetu", "Bojový pokrik", "Sarkastická poznámka",
+                   "Namrzené povzbudenie", "Ten nie."],
+            "en": ["Greet your buddy", "Insult the party", "Gloat after saving the day",
+                   "Refuse an item", "Battle cry", "Sarcastic remark",
+                   "Grumpy encouragement", "Not that one."]},
+    "shopkeep": {"sk": ["Vítanie zákazníka", "Tvrdý predaj", "Jednanie o cene",
+                        "Nehorázna cena", "Vychvaľovanie tovaru", "Zatváram krám",
+                        "Podozrivá ponuka"],
+                 "en": ["Welcome a customer", "Hard sell", "Haggle over the price",
+                        "Outrageous price", "Praise the wares", "Closing up shop",
+                        "Suspicious offer"]},
 }
-NPC_PHRASE_TYPES = ["Pozdrav", "Varovanie", "Klebeta z mesta", "Ponuka úlohy",
-                    "Krčmová reč", "Rozlúčka"]
+NPC_PHRASE_TYPES = {"sk": ["Pozdrav", "Varovanie", "Klebeta z mesta", "Ponuka úlohy",
+                           "Krčmová reč", "Rozlúčka"],
+                    "en": ["Greeting", "Warning", "Town gossip", "Quest offer",
+                           "Tavern talk", "Farewell"]}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Bag")
@@ -225,12 +265,14 @@ def _process(pcm: bytes, sr: int, speed: float, space: str) -> bytes:
     from raw PCM in to WAV out."""
     speed = max(0.5, min(2.0, speed))
     filters = [f"atempo={speed:.3f}"]
+    # short sub-25ms taps with low decay fuse into ambience (Haas) instead of a
+    # distinct slapback echo. Keep it subtle.
     if space == "room":
-        filters.append("aecho=0.8:0.85:45:0.22")
+        filters.append("aecho=0.9:0.85:11|18:0.10|0.05")
     elif space == "hall":
-        filters.append("aecho=0.8:0.9:60|100:0.3|0.2")
-    elif space == "bag":                              # muffled + close room: inside a bag
-        filters.append("lowpass=f=5500,aecho=0.8:0.8:35:0.18")
+        filters.append("aecho=0.88:0.82:38|60:0.22|0.12")
+    elif space == "bag":                              # muffled + tiny box: inside a bag
+        filters.append("lowpass=f=4600,aecho=0.9:0.8:9:0.07")
     af = ",".join(filters)
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
            "-af", af, "-f", "wav", "pipe:1"]
@@ -256,23 +298,36 @@ def _render(text: str, voice_key: str, mode_key: str,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
     m = MODES.get(mode_key, MODES[DEFAULT_MODE])
-    sp = speed if speed is not None else m["speed"]
     spc = space if space is not None else m["space"]
 
-    clean, aligner_words, marks = elongation.parse_marks(text)
+    # markup out first: ** stretches, TAB/—/… breaks. The model speaks a clean line;
+    # breaks become short deterministic silences (not the model's long pause token).
+    clean, aligner_words, marks, breaks = elongation.parse_marks(text)
     lead = v["pitch"] + m["lead"]            # voice sets timbre, mode sets delivery
     if emotion:
         lead = f"<|emotion:{emotion}|>" + lead
-    body = _beats(clean) if m["beats"] else clean
 
-    pcm, sr, meta = voice_gen(lead + body, v)
-    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks)
+    pcm, sr, meta = voice_gen(lead + clean, v)
+    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
+
+    # adaptive speed: nudge the delivery toward a natural dialogue pace based on
+    # how fast the model actually spoke this line (words/sec), instead of a fixed
+    # multiplier. Explicit speed from the UI overrides.
+    if speed is None:
+        words = max(1, len(clean.split()))
+        dur = max(0.2, len(pcm) / (2 * sr))
+        wps = words / dur
+        sp = max(0.9, min(1.35, ADAPTIVE_TARGET_WPS / wps))
+        meta["adaptive_speed"] = round(sp, 2)
+    else:
+        sp = speed
     return _process(pcm, sr, sp, spc), meta, drawls
 
 
 def _audio_response(wav, meta, drawls, extra=None) -> Response:
     headers = {"X-Bag-Hz": str(meta.get("hz")),
                "X-Bag-Tries": ",".join(map(str, meta.get("tries", []))),
+               "X-Bag-Speed": str(meta.get("adaptive_speed", "")),
                "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
     if extra:
         headers.update(extra)
@@ -317,6 +372,7 @@ class RespondReq(BaseModel):
     text: str
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
+    lang: str = "sk"
     speed: float | None = None
     space: str | None = None
     history: list = []
@@ -350,7 +406,7 @@ def respond(req: RespondReq):
     if not heard:
         return Response(status_code=400, content="empty text")
     v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
-    reply = _llm_reply(heard, v["persona"], req.history)
+    reply = _llm_reply(heard, _persona(v, req.lang), req.history)
     wav, meta, drawls = _render(reply, req.voice, req.mode, req.speed, req.space)
     return _audio_response(wav, meta, drawls,
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
@@ -371,16 +427,28 @@ class LineReq(BaseModel):
 
 
 @app.get("/phrases")
-def phrases(voice: str = DEFAULT_VOICE):
-    return {"voice": voice, "types": PHRASE_TYPES.get(voice, NPC_PHRASE_TYPES)}
+def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
+    key = "en" if _is_en(lang) else "sk"
+    types = PHRASE_TYPES.get(voice, NPC_PHRASE_TYPES)
+    return {"voice": voice, "lang": key, "types": types[key]}
 
 
 def _improv_line(voice_key: str, kind: str, lang: str) -> str:
+    """One improvised in-character line. Monolingual prompt per language, with
+    the model asked to place one or two natural short pauses as em dashes —
+    those become short deterministic silences downstream."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
-    prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind or 'replika'}. "
-              f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
-              f"{_lang_rule(lang)}")
-    text = _llm_reply(prompt, v["persona"], None, temperature=0.95, num_predict=90)
+    if _is_en(lang):
+        prompt = (f"Say ONE short line. Situation or type: {kind or 'a line'}. "
+                  f"Reply with ONLY the line, one or two sentences, in character, "
+                  f"no quotes. Put one or two natural short pauses as an em dash (—) "
+                  f"where the character would hesitate or breathe. English only.")
+    else:
+        prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind or 'replika'}. "
+                  f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
+                  f"Vlož jednu až dve prirodzené krátke pauzy ako pomlčku (—) tam, "
+                  f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.")
+    text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.95, num_predict=90)
     return text.strip().strip('"').split("\n")[0].strip()
 
 
@@ -448,7 +516,7 @@ async def converse(audio: UploadFile = File(...), voice: str = Form(DEFAULT_VOIC
         return JSONResponse({"heard": "", "reply": "", "error": "no speech"},
                             status_code=200)
     v = VOICES.get(voice, VOICES[DEFAULT_VOICE])
-    reply = _llm_reply(heard, v["persona"])
+    reply = _llm_reply(heard, _persona(v, lang))
     wav, meta, drawls = _render(reply, voice, mode)
     return _audio_response(wav, meta, drawls,
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})

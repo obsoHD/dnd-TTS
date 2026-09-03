@@ -21,6 +21,8 @@ import subprocess
 
 MS_PER_STAR = 150
 MAX_STARS = 6
+BREAK_MS = 180                 # a break is a short, deterministic silence
+BREAK_CHARS = {"\t", "—", "–", "…"}   # TAB, em/en dash, ellipsis
 
 # Slovak diacritics -> ASCII, 1:1 at the character level so vowel positions are
 # preserved. MMS_FA aligns romanized text; we keep our own fold to map back.
@@ -57,41 +59,52 @@ def _fold_char(c: str) -> str:
 
 
 def parse_marks(text: str):
-    """Pull the star markup out. Returns (clean_text_for_tts, aligner_words,
-    marks) where each mark is (aligner_word_index, vowel_index_in_word, stars)."""
-    disp_words, folded_words, raw_marks = [], [], []
-    for token in text.split():
-        disp, folded, wm = [], [], []
-        i = 0
-        while i < len(token):
-            c = token[i]
-            if c == "*":
-                j = i
-                while j < len(token) and token[j] == "*":
-                    j += 1
-                stars = min(j - i, MAX_STARS)
-                if folded and folded[-1] in _VOWELS:
-                    wm.append((len(folded) - 1, stars))
-                i = j
-                continue
-            disp.append(c)
-            fc = _fold_char(c)
-            if "a" <= fc <= "z":          # aligner dictionary is ASCII a-z only
-                folded.append(fc)
-            i += 1
-        disp_words.append("".join(disp))
-        folded_words.append("".join(folded))
-        for fi, stars in wm:
-            raw_marks.append((len(folded_words) - 1, fi, stars))
+    """Pull the markup out of the text. Returns
+    (clean_text_for_tts, aligner_words, marks, breaks) where
+      marks  = [(aligner_word_index, vowel_index_in_word, stars)]  -> stretch
+      breaks = [aligner_word_index]  -> short silence AFTER that word
+    Stars and break chars are stripped so the model speaks a clean line."""
+    disp, aligner_words, marks, breaks = [], [], [], []
+    cur = []                                   # folded chars of the word being built
 
-    tts_text = " ".join(disp_words)
-    aligner_words, idx_map = [], {}
-    for k, fw in enumerate(folded_words):
-        if fw:
-            idx_map[k] = len(aligner_words)
-            aligner_words.append(fw)
-    marks = [(idx_map[wk], fi, s) for (wk, fi, s) in raw_marks if wk in idx_map]
-    return tts_text, aligner_words, marks
+    def flush():
+        if cur:
+            aligner_words.append("".join(cur))
+            cur.clear()
+
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "*":
+            j = i
+            while j < n and text[j] == "*":
+                j += 1
+            if cur and cur[-1] in _VOWELS:  # word index = the one being built
+                marks.append((len(aligner_words), len(cur) - 1, min(j - i, MAX_STARS)))
+            i = j
+            continue
+        if c in BREAK_CHARS:
+            flush()
+            if aligner_words and (not breaks or breaks[-1] != len(aligner_words) - 1):
+                breaks.append(len(aligner_words) - 1)
+            disp.append(" ")
+            i += 1
+            continue
+        if c.isspace():
+            flush()
+            disp.append(" ")
+            i += 1
+            continue
+        disp.append(c)
+        fc = _fold_char(c)
+        if "a" <= fc <= "z":                   # aligner dictionary is ASCII a-z only
+            cur.append(fc)
+        i += 1
+    flush()
+
+    tts_text = " ".join("".join(disp).split())
+    marks = [m for m in marks if m[0] < len(aligner_words)]
+    return tts_text, aligner_words, marks, breaks
 
 
 def _stretch(seg: bytes, sr: int, add_sec: float) -> bytes:
@@ -114,10 +127,13 @@ def _stretch(seg: bytes, sr: int, add_sec: float) -> bytes:
     return out or seg
 
 
-def elongate(pcm: bytes, sr: int, aligner_words, marks) -> tuple[bytes, list]:
-    """Stretch each marked vowel in place. Returns (pcm, applied) where applied
-    lists (word, +ms) for logging. No-ops cleanly if alignment is unavailable."""
-    if not marks or not aligner_words or not load():
+def elongate(pcm: bytes, sr: int, aligner_words, marks, breaks=None,
+             break_ms: int = BREAK_MS) -> tuple[bytes, list]:
+    """Apply the markup to the audio: stretch marked vowels, insert a short
+    silence after each break word. Returns (pcm, applied) for logging. No-ops
+    cleanly when there is nothing to do or alignment is unavailable."""
+    breaks = breaks or []
+    if (not marks and not breaks) or not aligner_words or not load():
         return pcm, []
     import torch
     import torchaudio
@@ -131,15 +147,17 @@ def elongate(pcm: bytes, sr: int, aligner_words, marks) -> tuple[bytes, list]:
         emission, _ = _model(wav16)
         token_spans = _aligner(emission[0], _tokenizer(aligner_words))
 
-    sec_per_frame = wav16.size(1) / emission.size(1) / 16000.0
-    flat, offsets, off = [], [], 0                 # flat token times across line
+    spf = wav16.size(1) / emission.size(1) / 16000.0     # seconds per frame
+    flat, offsets, word_end, off = [], [], [], 0
     for spans in token_spans:
         offsets.append(off)
         for sp in spans:
-            flat.append((sp.start * sec_per_frame, sp.end * sec_per_frame))
+            flat.append((sp.start * spf, sp.end * spf))
         off += len(spans)
+        word_end.append(spans[-1].end * spf if spans else (flat[-1][1] if flat else 0.0))
 
-    regions = []                                   # (start_sec, end_sec, add_sec)
+    # edits: ("stretch", t0, t1, add_sec, label) / ("break", t, silence_sec, label)
+    edits = []
     for awi, fi, stars in marks:
         if awi >= len(offsets):
             continue
@@ -150,15 +168,23 @@ def elongate(pcm: bytes, sr: int, aligner_words, marks) -> tuple[bytes, list]:
         end = flat[gi + 1][0] if gi + 1 < len(flat) else flat[gi][1]
         if end <= start:
             end = flat[gi][1]
-        regions.append((start, end, stars * MS_PER_STAR / 1000.0, awi))
+        edits.append(("stretch", start, end, stars * MS_PER_STAR / 1000.0, aligner_words[awi]))
+    for awi in breaks:
+        if awi < len(word_end):
+            edits.append(("break", word_end[awi], word_end[awi], break_ms / 1000.0, aligner_words[awi]))
 
-    applied = []
-    out = pcm
-    for start, end, add, awi in sorted(regions, reverse=True):  # last-to-first
-        sb, eb = int(start * sr) * 2, int(end * sr) * 2
-        seg = out[sb:eb]
-        if len(seg) < 2:
-            continue
-        out = out[:sb] + _stretch(seg, sr, add) + out[eb:]
-        applied.append((aligner_words[awi], int(add * 1000)))
+    applied, out = [], pcm
+    # apply last-to-first so earlier byte offsets stay valid
+    for kind, t0, t1, amt, label in sorted(edits, key=lambda e: e[1], reverse=True):
+        sb = int(t0 * sr) * 2
+        if kind == "stretch":
+            eb = int(t1 * sr) * 2
+            seg = out[sb:eb]
+            if len(seg) < 2:
+                continue
+            out = out[:sb] + _stretch(seg, sr, amt) + out[eb:]
+            applied.append((label, int(amt * 1000)))
+        else:
+            out = out[:sb] + (b"\x00\x00" * int(amt * sr)) + out[sb:]
+            applied.append((label + "|", int(amt * 1000)))
     return out, list(reversed(applied))
