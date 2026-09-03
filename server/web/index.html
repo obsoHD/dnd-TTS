@@ -60,7 +60,7 @@
   audio{width:100%;margin-top:12px;display:none}
   .meta{margin-top:8px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
   .breakdown{margin-top:10px;display:none;border:1px solid var(--edge);border-radius:10px;overflow:hidden}
-  .breakdown div{display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:7px 12px;font-size:14px;border-top:1px solid var(--edge)}
+  .breakdown div{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;padding:7px 12px;font-size:14px;border-top:1px solid var(--edge)}
   .breakdown div:first-child{border-top:0;background:#1c1713;color:var(--muted);font-size:12px;letter-spacing:.6px;text-transform:uppercase}
   .breakdown .m{color:var(--blue);font-weight:600}
   .breakdown .pc{color:var(--muted)}
@@ -199,16 +199,18 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const MODEDESC = {bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery", smug:"smug, gloating, victorious",
-  pissed:"protective, furious, loud", menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat", soft:"reluctant, quietly sincere"};
+  pissed:"protective, furious, loud", menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat", soft:"reluctant, quietly sincere",
+  friendly:"warm, welcoming", business:"matter-of-fact, businesslike", happy:"delighted, upbeat", curious:"curious, intrigued",
+  sad:"sad, heavy", disgusted:"disgusted, repulsed", awe:"awestruck, hushed"};
 const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
 const TEMPO_NAMES = {"-2":"very slow","-1":"slow","0":"normal","1":"brisk","2":"rushed"};
 const SENT_SPLIT = /(?<=[.!?…])\s+/;
 
 let voice = "bag", mode = "bro", lang = "sk", lastURL = null;
 const prefs = (() => { try { return JSON.parse(localStorage.getItem("bagprefs") || "{}"); } catch (e) { return {}; } })();
-function savePrefs(){ try { localStorage.setItem("bagprefs", JSON.stringify({song:$("song").checked, scene:$("scene").value})); } catch (e) {} }
-$("song").checked = !!prefs.song; $("scene").value = prefs.scene || "";
-$("song").onchange = savePrefs; $("scene").addEventListener("input", savePrefs);
+function savePrefs(){ try { localStorage.setItem("bagprefs", JSON.stringify({song:$("song").checked, scene:$("scene").value, space:$("space").value})); } catch (e) {} }
+$("song").checked = !!prefs.song; $("scene").value = prefs.scene || ""; if (prefs.space) $("space").value = prefs.space;
+$("song").onchange = savePrefs; $("scene").addEventListener("input", savePrefs); $("space").onchange = savePrefs;
 
 // language
 $("langs").onclick = e => { if(!e.target.dataset.l) return; lang = e.target.dataset.l;
@@ -218,7 +220,7 @@ $("langs").onclick = e => { if(!e.target.dataset.l) return; lang = e.target.data
 const modesEl = $("modes");
 for (const k of Object.keys(MODEDESC)) { const b = document.createElement("span"); b.className = "pill" + (k===mode?" on":""); b.textContent = k; b.dataset.m = k; modesEl.appendChild(b); }
 function showMode(k){ [...modesEl.children].forEach(c => c.classList.toggle("on", c.dataset.m === k)); $("modedesc").textContent = MODEDESC[k] || ""; }
-function setMode(k){ mode = k; showMode(k); $("space").value = MODESPACE[k] || "room"; }
+function setMode(k){ mode = k; showMode(k); }
 modesEl.onclick = e => { if(e.target.dataset.m) setMode(e.target.dataset.m); };
 setMode("bro");
 
@@ -277,13 +279,13 @@ function play(blob){ if (lastURL) URL.revokeObjectURL(lastURL); lastURL = URL.cr
   const a = $("audio"); a.src = lastURL; a.style.display = "block"; a.play().catch(() => {}); $("dl").disabled = false; }
 function busy(b, msg){ ["go","direct","fix","dl"].forEach(id => $(id).disabled = b); if (msg !== undefined) $("status").textContent = msg; }
 
-function showBreakdown(text, modes, paces, tempo){
+function showBreakdown(text, modes, paces, tempo, pauses){
   const sents = text.split(SENT_SPLIT).filter(s => s.trim());
-  const ms = (modes||"").split(",").filter(Boolean), ps = (paces||"").split(",").filter(Boolean);
+  const ms = (modes||"").split(",").filter(Boolean), ps = (paces||"").split(",").filter(Boolean), pz = (pauses||"").split(",");
   if (!ms.length) { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; return; }
-  let html = `<div><span>part</span><span>mode</span><span>pace</span></div>`;
-  sents.forEach((s, i) => { html += `<div><span>${esc(s)}</span><span class="m">${esc(ms[i]||"")}</span><span class="pc">${esc(ps[i]||"")}</span></div>`; });
-  if (tempo !== null && tempo !== "") html += `<div><span>overall speed</span><span class="m">${esc(TEMPO_NAMES[tempo]||tempo)}</span><span></span></div>`;
+  let html = `<div><span>part</span><span>mode</span><span>pace</span><span>pause</span></div>`;
+  sents.forEach((s, i) => { html += `<div><span>${esc(s)}</span><span class="m">${esc(ms[i]||"")}</span><span class="pc">${esc(ps[i]||"")}</span><span class="pc">${esc((pz[i]||"none") === "none" ? "" : pz[i])}</span></div>`; });
+  if (tempo !== null && tempo !== "") html += `<div><span>overall speed</span><span class="m">${esc(TEMPO_NAMES[tempo]||tempo)}</span><span></span><span></span></div>`;
   $("breakdown").innerHTML = html; $("breakdown").style.display = "block"; $("dirhint").style.display = "none";
 }
 
@@ -297,8 +299,8 @@ async function speak(directed){
     const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     if (!r.ok) throw new Error("server " + r.status);
     const hz = r.headers.get("X-Bag-Hz"), sp = r.headers.get("X-Bag-Speed"), chosen = r.headers.get("X-Bag-Mode"),
-          paces = r.headers.get("X-Bag-Paces"), modes = r.headers.get("X-Bag-Modes"), tempo = r.headers.get("X-Bag-Tempo"), drawls = r.headers.get("X-Bag-Drawls");
-    if (directed) showBreakdown(text, modes, paces, tempo); else { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; }
+          paces = r.headers.get("X-Bag-Paces"), modes = r.headers.get("X-Bag-Modes"), tempo = r.headers.get("X-Bag-Tempo"), drawls = r.headers.get("X-Bag-Drawls"), pauses = r.headers.get("X-Bag-Pauses");
+    if (directed) showBreakdown(text, modes, paces, tempo, pauses); else { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; }
     play(await r.blob());
     $("status").textContent = (directed ? "directed take" : "instant take") + " · " + ((performance.now()-t0)/1000).toFixed(1) + "s";
     $("meta").textContent = "pitch " + hz + " Hz" + (sp ? " · speed " + sp + "×" : "") + (chosen && directed ? " · mode " + chosen : "")

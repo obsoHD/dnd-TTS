@@ -21,6 +21,7 @@ It also serves the browser UI at `/`. Config is env; see the bottom.
 from __future__ import annotations
 
 import collections
+import concurrent.futures
 import difflib
 import hashlib
 import json
@@ -300,6 +301,22 @@ MODES = {
     "soft":    {"lead": "<|emotion:affection|><|prosody:expressive_high|><|prosody:speed_slow|>",
                 "speed": 1.00, "space": "room", "beats": True,
                 "desc": "reluctant, quietly sincere"},
+    # general registers for any character (the director needs finer shades than
+    # Bag's seven: a welcome is friendly, a question businesslike, a result happy)
+    "friendly":  {"lead": "<|emotion:affection|><|prosody:expressive_high|>",
+                  "speed": 1.05, "space": "room", "beats": True, "desc": "warm, welcoming"},
+    "business":  {"lead": "<|emotion:contentment|><|prosody:expressive_low|>",
+                  "speed": 1.05, "space": "room", "beats": True, "desc": "matter-of-fact, businesslike"},
+    "happy":     {"lead": "<|emotion:elation|><|prosody:expressive_high|>",
+                  "speed": 1.08, "space": "room", "beats": True, "desc": "delighted, upbeat"},
+    "curious":   {"lead": "<|emotion:surprise|><|prosody:expressive_high|>",
+                  "speed": 1.05, "space": "room", "beats": True, "desc": "curious, intrigued"},
+    "sad":       {"lead": "<|emotion:sadness|><|prosody:expressive_high|><|prosody:speed_slow|>",
+                  "speed": 1.0, "space": "room", "beats": True, "desc": "sad, heavy"},
+    "disgusted": {"lead": "<|emotion:disgust|><|prosody:expressive_high|>",
+                  "speed": 1.05, "space": "room", "beats": True, "desc": "disgusted, repulsed"},
+    "awe":       {"lead": "<|emotion:awe|><|prosody:expressive_high|><|prosody:speed_slow|>",
+                  "speed": 1.0, "space": "hall", "beats": True, "desc": "awestruck, hushed"},
 }
 DEFAULT_MODE = "bro"
 
@@ -309,7 +326,8 @@ DEFAULT_MODE = "bro"
 # hyped/furious/panic 6.5-7.5; English runs ~15% lower. Words/sec was wrong for
 # Slovak's long words and pinned every line at the cap.
 MODE_SPS = {"bro": 6.6, "deadpan": 5.8, "smug": 6.0, "pissed": 7.0,
-            "menace": 4.0, "panic": 7.2, "soft": 4.2}
+            "menace": 4.0, "panic": 7.2, "soft": 4.2, "friendly": 5.8, "business": 5.6,
+            "happy": 6.4, "curious": 5.8, "sad": 4.4, "disgusted": 5.6, "awe": 4.4}
 EN_RATE_SCALE = 0.85
 _VOW = "aeiouyáéíóúýäô"
 _SYL_DIPH = re.compile(r"i[aeu]|ô")
@@ -374,7 +392,7 @@ def _synth(text: str, seed: int, ref: str, ref_text: str, max_tokens: int = 700)
     return bytes(pcm), sr
 
 
-_TTS_LOCK = threading.Lock()   # one GPU: one generation (gate loop included) at a time
+_TTS_LOCK = threading.BoundedSemaphore(4)   # the server batches concurrent requests   # one GPU: one generation (gate loop included) at a time
 
 
 def voice_gen(text: str, voice: dict, max_tokens: int = 700,
@@ -397,17 +415,24 @@ def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
     if seed_hint is not None:
         seeds = [seed_hint] + [s for s in seeds if s != seed_hint]
     hits = []
-    for seed in seeds:
-        pcm, sr = _synth(text, seed, voice["ref"], voice["text"], max_tokens)
-        hz = _f0(pcm, sr)
-        attempts.append(round(hz))
-        dist = abs(hz - mid)
-        if best is None or dist < best[3]:
-            best = (pcm, sr, hz, dist)
-        if lo < hz < hi:
-            hits.append((pcm, sr, {"accepted_seed": seed, "hz": round(hz), "tries": list(attempts)}))
-            if len(hits) >= want:
-                break
+    pos = 0
+    while pos < len(seeds) and len(hits) < want:
+        batch = seeds[pos:pos + max(1, want - len(hits))]
+        pos += len(batch)
+        if len(batch) == 1:
+            results = [(batch[0],) + _synth(text, batch[0], voice["ref"], voice["text"], max_tokens)]
+        else:                                   # fire the batch at once; the server batches decode
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as ex:
+                futs = [ex.submit(_synth, text, sd, voice["ref"], voice["text"], max_tokens) for sd in batch]
+                results = [(sd,) + f.result() for sd, f in zip(batch, futs)]
+        for seed, pcm, sr in results:
+            hz = _f0(pcm, sr)
+            attempts.append(round(hz))
+            dist = abs(hz - mid)
+            if best is None or dist < best[3]:
+                best = (pcm, sr, hz, dist)
+            if lo < hz < hi:
+                hits.append((pcm, sr, {"accepted_seed": seed, "hz": round(hz), "tries": list(attempts)}))
     if hits:
         return hits
     return [(best[0], best[1], {"accepted_seed": None, "hz": round(best[2]),
@@ -437,10 +462,11 @@ def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
 # max internal pause kept per delivery mode (s): hyped/furious modes snap,
 # menacing/soft modes are allowed to breathe
 MODE_PAUSE = {"bro": 0.30, "deadpan": 0.40, "smug": 0.35, "pissed": 0.28,
-              "menace": 0.60, "panic": 0.25, "soft": 0.55}
+              "menace": 0.60, "panic": 0.25, "soft": 0.55, "friendly": 0.35, "business": 0.40,
+              "happy": 0.30, "curious": 0.40, "sad": 0.60, "disgusted": 0.40, "awe": 0.60}
 
 
-def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4) -> bytes:
+def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4, internal: bool = True) -> bytes:
     """Trim leading/trailing silence and tighten internal pauses for dialogue:
     the model parks long silences at commas and periods (~40% of a clip), so
     any internal pause longer than keep_pause+0.1 s is shortened to keep_pause —
@@ -448,8 +474,10 @@ def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4) -> bytes:
     endings survive, and 300 ms of tail kept so the last word's decay stays."""
     af = ("silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.08,"
           "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,"
-          f"areverse,silenceremove=stop_periods=-1:stop_duration={keep_pause + 0.1:.2f}"
-          f":stop_threshold=-45dB:stop_silence={keep_pause:.2f}")
+          "areverse")
+    if internal:
+        af += (f",silenceremove=stop_periods=-1:stop_duration={keep_pause + 0.1:.2f}"
+               f":stop_threshold=-45dB:stop_silence={keep_pause:.2f}")
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
            "-af", af, "-f", "s16le", "pipe:1"]
     return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
@@ -647,6 +675,10 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
         y = seg.astype(np.float32) / 32768.0
         if f != 1.0:
             y = _stretch_np(y, sr, f)
+            w = min(int(sr * 0.005), len(y) // 2)      # 5 ms edge fades at the seam
+            if w > 0:
+                y[:w] *= np.linspace(0.0, 1.0, w, dtype=np.float32)
+                y[-w:] *= np.linspace(1.0, 0.0, w, dtype=np.float32)
         out.append(x[pos:a])
         out.append((np.clip(y, -1.0, 1.0) * 32767).astype(np.int16))
         pos = b
@@ -672,33 +704,51 @@ def _place_tags(lead: str, clean: str) -> str:
     return lead + clean
 
 
-def _plan_parts(text: str, mode_key: str, modes=None) -> list:
-    """Split the line into parts: with per-sentence modes from the director,
-    consecutive sentences sharing a mode become one part (prosody continuity,
-    one TTS call); without, the usual length chunks under the single mode."""
+def _join_parts(parts: list, sr: int, gaps=None) -> bytes:
+    """Join rendered parts with room tone (not digital silence) and 20 ms edge
+    fades; gaps[i] is the director's pause after part i."""
+    if len(parts) == 1:
+        return parts[0]
+    gaps = list(gaps or []) + [0.18] * len(parts)
+    w = int(sr * 0.02) * 2
+    out = elongation._ramp(parts[0], w, rising=False)
+    for i, nxt in enumerate(parts[1:]):
+        t = max(0.0, len(out) / (2 * sr) - 0.05)
+        out += elongation._room_tone(out, sr, t, int(max(0.1, gaps[i]) * sr))
+        out += elongation._ramp(elongation._ramp(nxt, w, True), w, False)
+    return out
+
+
+def _plan_parts(text: str, mode_key: str, modes=None, pauses=None) -> list:
+    """Split the line into parts. A new part starts where the director changes
+    the mode OR asks for a pause (a deliberate pause is also where a seam is
+    inaudible). Returns [(chunk_text, mode, gap_after_seconds)]."""
     sents = [x.strip() for x in _SENT.split(text) if x.strip()]
     if not modes or len(modes) != len(sents):
-        return [(c, mode_key) for c in _chunks(text)]
-    groups, cur, curm = [], [], modes[0]
-    for x, mk in zip(sents, modes):
+        return [(c, mode_key, 0.18) for c in _chunks(text)]
+    pauses = list(pauses or []) + ["none"] * len(sents)
+    gap_of = {"none": 0.18, "short": 0.5, "long": 1.0}
+    groups, cur, curm = [], [], (modes[0] if modes[0] in MODES else mode_key)
+    for i, (x, mk) in enumerate(zip(sents, modes)):
         mk = mk if mk in MODES else mode_key
-        if mk != curm and cur:
-            groups.append((" ".join(cur), curm))
+        if cur and (mk != curm or pauses[i - 1] != "none"):
+            groups.append((" ".join(cur), curm, gap_of.get(pauses[i - 1], 0.18)))
             cur = []
         cur.append(x)
         curm = mk
     if cur:
-        groups.append((" ".join(cur), curm))
+        groups.append((" ".join(cur), curm, gap_of.get(pauses[len(sents) - 1], 0.18)))
     out = []
-    for t, mk in groups:
-        for c in _chunks(t):
-            out.append((c, mk))
+    for t, mk, gap in groups:
+        cs = _chunks(t)
+        for j, c in enumerate(cs):
+            out.append((c, mk, gap if j == len(cs) - 1 else 0.18))
     return out
 
 
 def _render(text: str, voice_key: str, mode_key: str,
             speed=None, space=None, emotion="", lang: str = "sk",
-            paces=None, song=False, tempo=None, modes=None) -> tuple[bytes, dict, list]:
+            paces=None, song=False, tempo=None, modes=None, pauses=None) -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
@@ -728,19 +778,23 @@ def _render(text: str, voice_key: str, mode_key: str,
     # stable and the model's runaway on long inputs is bounded. Markup (** and
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
-    parts, drawls, meta, sr, factors, rates, seed_hint = [], [], {}, 24000, [], [], None
-    sent_off, part_modes = 0, []
-    for chunk, part_mode in _plan_parts(text, mode_key, modes):
+    plan = _plan_parts(text, mode_key, modes, pauses)
+    offs, off = [], 0                          # sentence offsets per part (director paces)
+    for chunk, _, _ in plan:
+        offs.append(off)
+        off += len([x for x in _SENT.split(chunk) if x.strip()])
+
+    def render_part(idx: int, seed_hint, want: int):
+        chunk, part_mode, gap_after = plan[idx]
         lead = _lead_for(part_mode)
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
-            continue
+            return None
         # per-line token cap: a held vowel gets truncated instead of running 10 s
-        # (25 codec frames/s; est. 4.5 syl/s plus the deliberate holds)
         est = (_syllables(_spoken(clean)) / 4.5 + sum(m[3] for m in marks) * 0.15
                + 0.6 * clean.count("<|prosody:") + 1.0)
         max_tokens = max(150, min(900, int(est * 25 * 1.6) + 60))
-        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, BEST_OF)
+        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, want)
         lo, hi = v["band"]
         mid = (lo + hi) / 2
         exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(part_mode, 5.4)
@@ -753,7 +807,11 @@ def _render(text: str, voice_key: str, mode_key: str,
             sc = 3.0 * cer + 0.5 * abs(cm["hz"] - mid) / mid + abs(math.log(dur / max(0.2, exp_sec)))
             return sc, cer
 
-        scored = [(_score(c), c) for c in cands]
+        if len(cands) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cands)) as ex:
+                scored = list(zip(ex.map(_score, cands), cands))
+        else:
+            scored = [(_score(c), c) for c in cands]
         (sc, cer), (pcm, sr, cmeta) = min(scored, key=lambda t: t[0][0])
         if ASR_GATE and cer > ASR_CER_MAX and len(scored) < 3:   # still garbled: one more take
             alt = ((cmeta.get("accepted_seed") or 0) + 3) % MAX_TRIES
@@ -764,27 +822,44 @@ def _render(text: str, voice_key: str, mode_key: str,
         cmeta["cer"] = cer
         cmeta["candidates"] = len(scored)
         cmeta["score"] = round(sc, 3)
-        seed_hint = cmeta.get("accepted_seed", seed_hint)   # same seed across chunks
         pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
-        drawls += applied
-        meta = meta or cmeta
+        f, r = [], []
         if speed is None:
-            # context-aware pacing: each sentence measured and stretched on its own
             n_s = len([x for x in _SENT.split(chunk) if x.strip()])
             pcm, f, r = _pace_sentences(chunk, pcm, sr, part_mode, applied, lang,
-                                        (paces or [])[sent_off:sent_off + n_s],
+                                        (paces or [])[offs[idx]:offs[idx] + n_s],
                                         TEMPO_TARGET.get(tempo or 0, 1.0), tempo or 0)
-            sent_off += n_s
-            factors += f
-            rates += r
-        parts.append(pcm)
-        part_modes.append(part_mode)
+        # clamp this part's own internal pauses; director gaps are added at the join
+        pcm = _trim(pcm, sr, MODE_PAUSE.get(part_mode, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0))
+        return {"pcm": pcm, "sr": sr, "meta": cmeta, "applied": applied, "f": f, "r": r,
+                "mode": part_mode, "gap": gap_after}
+
+    results = [None] * len(plan)
+    results[0] = render_part(0, None, BEST_OF)             # best-of-N takes, in parallel
+    seed_hint = results[0]["meta"].get("accepted_seed") if results[0] else None
+    if len(plan) > 1:                                      # remaining parts together, same seed
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan) - 1)) as ex:
+            futs = {i: ex.submit(render_part, i, seed_hint, 1) for i in range(1, len(plan))}
+            for i, fu in futs.items():
+                results[i] = fu.result()
+
+    parts, drawls, meta, sr, factors, rates, part_modes, gaps = [], [], {}, 24000, [], [], [], []
+    for res in results:
+        if not res:
+            continue
+        parts.append(res["pcm"])
+        sr = res["sr"]
+        drawls += res["applied"]
+        meta = meta or res["meta"]
+        factors += res["f"]
+        rates += res["r"]
+        part_modes.append(res["mode"])
+        gaps.append(res["gap"])
     if not parts:
         raise ValueError("nothing to say")
     meta["chunks"] = len(parts)
     meta["parts"] = part_modes
-    pcm = _trim((b"\x00\x00" * int(0.25 * sr)).join(parts), sr,
-                MODE_PAUSE.get(mode_key, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0))
+    pcm = _trim(_join_parts(parts, sr, gaps), sr, internal=False)   # edges only
 
     if speed is None:
         meta["adaptive_speed"] = round(float(np.mean(factors)), 2) if factors else 1.0
@@ -915,6 +990,7 @@ class SayReq(BaseModel):
     paces: list | None = None      # per-sentence slow/normal/fast
     tempo: int | None = None       # voice-speed dial -2..2 (None = mode default)
     modes: list | None = None      # per-sentence modes (director or client)
+    pauses: list | None = None     # per-sentence pause after: none/short/long
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
     lang: str = "sk"               # steers pace targets (EN runs ~15% slower)
@@ -1046,7 +1122,7 @@ def say(req: SayReq):
     if not text:
         return Response(status_code=400, content="empty text")
     key = hashlib.sha1(json.dumps([text, req.voice, req.mode, req.lang, req.speed, req.space,
-                                   req.emotion, req.direct, req.scene, req.song, req.paces, req.tempo, req.modes],
+                                   req.emotion, req.direct, req.scene, req.song, req.paces, req.tempo, req.modes, req.pauses],
                                   ensure_ascii=False).encode("utf-8")).hexdigest()
     hit = _CACHE.get(key)
     if hit:                                          # identical line: instant replay
@@ -1055,14 +1131,17 @@ def say(req: SayReq):
         return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "hit",
                                                    "X-Bag-Paces": ",".join(meta.get("paces", [])),
                                                    "X-Bag-Modes": ",".join(meta.get("modes", [])),
+                                                   "X-Bag-Pauses": ",".join(meta.get("pauses", [])),
                                                    "X-Bag-Tempo": meta.get("tempo", "")})
-    mode, paces, tempo, modes = req.mode, req.paces, req.tempo, req.modes
+    mode, paces, tempo, modes, pauses = req.mode, req.paces, req.tempo, req.modes, req.pauses
     if req.direct:                                   # the director splits the line into parts
-        mode, paces, tempo, modes = _direct(text, req.voice, req.lang, req.scene)
+        mode, paces, tempo, modes, pauses = _direct(text, req.voice, req.lang, req.scene)
     wav, meta, drawls = _render(text, req.voice, mode, req.speed, req.space, req.emotion,
-                                req.lang, paces=paces, song=req.song, tempo=tempo, modes=modes)
+                                req.lang, paces=paces, song=req.song, tempo=tempo, modes=modes,
+                                pauses=pauses)
     meta["paces"] = list(paces or [])
     meta["modes"] = list(modes or [])
+    meta["pauses"] = list(pauses or [])
     meta["tempo"] = "" if tempo is None else str(tempo)
     _CACHE[key] = (wav, meta, drawls, mode)
     while len(_CACHE) > _CACHE_MAX:
@@ -1070,6 +1149,7 @@ def say(req: SayReq):
     return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "miss",
                                                "X-Bag-Paces": ",".join(meta.get("paces", [])),
                                                "X-Bag-Modes": ",".join(meta.get("modes", [])),
+                                               "X-Bag-Pauses": ",".join(meta.get("pauses", [])),
                                                "X-Bag-Tempo": meta.get("tempo", "")})
 
 
@@ -1081,11 +1161,11 @@ def respond(req: RespondReq):
         return Response(status_code=400, content="empty text")
     v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
     reply = _llm_reply(heard, _with_scene(_persona(v, req.lang), req.scene, req.lang), req.history)
-    mode, paces, tempo, modes = req.mode, None, req.tempo, None
+    mode, paces, tempo, modes, pauses = req.mode, None, req.tempo, None, None
     if req.direct:
-        mode, paces, tempo, modes = _direct(reply, req.voice, req.lang, req.scene)
+        mode, paces, tempo, modes, pauses = _direct(reply, req.voice, req.lang, req.scene)
     wav, meta, drawls = _render(reply, req.voice, mode, req.speed, req.space, lang=req.lang,
-                                paces=paces, song=req.song, tempo=tempo, modes=modes)
+                                paces=paces, song=req.song, tempo=tempo, modes=modes, pauses=pauses)
     return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Heard": quote(heard),
                                                "X-Bag-Reply": quote(reply)})
 
@@ -1112,7 +1192,7 @@ def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
     return {"voice": voice, "lang": key, "types": types[key]}
 
 
-PACE_MULT = {"slow": 0.92, "normal": 1.0, "fast": 1.12}
+PACE_MULT = {"slow": 0.86, "normal": 1.0, "fast": 1.2}
 # voice-speed context dial, -2 (very slow) .. +2 (rushed): sets the model's own
 # speed token, scales the pace target and the pause cap. The director sets it
 # when auto delivery is on.
@@ -1126,7 +1206,10 @@ TEMPO_PAUSE = {-2: 1.5, -1: 1.2, 0: 1.0, 1: 0.8, 2: 0.65}
 DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "suché, bez emócií, ironické",
                      "smug": "samoľúby, chvastavý", "pissed": "nahnevaný, ochranársky, hlasný",
                      "menace": "tichý, výhražný šepot", "panic": "panika, boj, rýchle",
-                     "soft": "neochotne úprimné, mäkké"}
+                     "soft": "neochotne úprimné, mäkké", "friendly": "priateľské, vrelé privítanie",
+                     "business": "vecné, obchodné", "happy": "radostné, nadšené",
+                     "curious": "zvedavé", "sad": "smutné, ťažké", "disgusted": "znechutené",
+                     "awe": "v úžase, stíšené"}
 
 
 def _with_scene(persona: str, scene: str, lang: str) -> str:
@@ -1143,21 +1226,27 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
     if _is_en(lang):
         sysm = ("You are the voice director for a D&D character voice. Choose ONE delivery mode "
                 "for the whole line from: " + ", ".join(f"{k} ({v['desc']})" for k, v in MODES.items())
-                + ". For EACH numbered sentence choose its own mode (the delivery may change "
-                "across the line: a whisper can turn into a shout) and a pace: slow, normal or "
-                "fast, from its content and the scene; and an overall tempo for the line as an "
-                "integer from -2 (very slow, heavy) to 2 (rushed, breathless). Reply ONLY with "
-                "JSON: {\"sentences\": [{\"mode\": \"menace\", \"pace\": \"slow\"}, ...], \"tempo\": 0} "
-                "with exactly one entry per sentence.")
+                + ". For each numbered sentence give a mode, a pace and a pause after it. Keep the "
+                "SAME mode unless the content genuinely shifts (a greeting can be friendly, a "
+                "question businesslike, a result happy); typically one or two modes per line, "
+                "never more than three, no flip-flopping. Vary the pace freely (slow, normal, "
+                "fast). pause = none, short (a beat) or long (a real pause) — use pauses where a "
+                "speaker would actually stop, between thoughts. Also give an overall tempo for the "
+                "line as an integer from -2 (very slow, heavy) to 2 (rushed). Reply ONLY with JSON: "
+                "{\"sentences\": [{\"mode\": \"friendly\", \"pace\": \"fast\", \"pause\": \"short\"}, ...], "
+                "\"tempo\": 0} with exactly one entry per sentence.")
     else:
         sysm = ("Si hlasový režisér pre postavu z D&D. Vyber JEDEN spôsob podania celej repliky z: "
                 + ", ".join(f"{k} ({DIRECTOR_MODES_SK[k]})" for k in MODES)
-                + ". Pre KAŽDÚ očíslovanú vetu vyber jej vlastný spôsob podania (podanie sa môže "
-                "počas repliky meniť: šepot môže prejsť do kriku) a tempo: slow, normal alebo fast, "
-                "podľa obsahu a scény; a celkové tempo celej repliky ako celé číslo od -2 (veľmi "
-                "pomaly, ťažko) po 2 (rýchlo, bez dychu). Odpovedz IBA JSON: "
-                "{\"sentences\": [{\"mode\": \"menace\", \"pace\": \"slow\"}, ...], \"tempo\": 0} "
-                "— presne jeden záznam na vetu.")
+                + ". Pre každú očíslovanú vetu uveď spôsob podania, tempo a pauzu po nej. Spôsob "
+                "podania NEMEŇ, pokiaľ sa obsah naozaj nezmení (privítanie môže byť friendly, otázka "
+                "business, výsledok happy); zvyčajne jeden až dva spôsoby na repliku, nikdy viac ako "
+                "tri, žiadne preskakovanie. Tempo meň voľne (slow, normal, fast). pause = none, "
+                "short (krátka pauza) alebo long (skutočná pauza) — tam, kde by sa hovoriaci naozaj "
+                "zastavil, medzi myšlienkami. Uveď aj celkové tempo repliky ako celé číslo od -2 "
+                "(veľmi pomaly) po 2 (rýchlo). Odpovedz IBA JSON: {\"sentences\": [{\"mode\": "
+                "\"friendly\", \"pace\": \"fast\", \"pause\": \"short\"}, ...], \"tempo\": 0} — presne "
+                "jeden záznam na vetu.")
     sysm = _with_scene(sysm, scene, lang)
     user = "\n".join(f"{i + 1}. {x}" for i, x in enumerate(sents)) or text
     try:
@@ -1171,13 +1260,20 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
         modes = [m or fill for m in modes] + [fill] * (len(sents) - len(modes))
         paces += ["normal"] * (len(sents) - len(paces))
         mode = max(set(modes), key=modes.count) if modes else DEFAULT_MODE
+        # at most three registers per line: fold the rarest extras into the main one
+        while len(set(modes)) > 3:
+            rare = min(set(modes), key=modes.count)
+            modes = [mode if m == rare else m for m in modes]
+        pauses = [(r.get("pause") if isinstance(r, dict) and r.get("pause") in ("none", "short", "long")
+                   else "none") for r in rows][:len(sents)]
+        pauses += ["none"] * (len(sents) - len(pauses))
         try:
             tempo = max(-2, min(2, int(d.get("tempo", 0))))
         except Exception:                               # noqa: BLE001
             tempo = 0
-        return mode, paces, tempo, modes
+        return mode, paces, tempo, modes, pauses
     except Exception:                                   # noqa: BLE001
-        return DEFAULT_MODE, ["normal"] * len(sents), 0, [DEFAULT_MODE] * len(sents)
+        return DEFAULT_MODE, ["normal"] * len(sents), 0, [DEFAULT_MODE] * len(sents), ["none"] * len(sents)
 
 
 def _improv_line(voice_key: str, kind: str, lang: str, scene: str = "") -> str:
