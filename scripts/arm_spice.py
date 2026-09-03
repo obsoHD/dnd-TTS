@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
 
-from app import config, render, tts_client, voices
+from app import config, render, store, tts_client, voices
 from app.delivery import MAX_ARMED, SPICES, Spice
 
 REPO = Path(__file__).resolve().parents[1]
@@ -66,6 +66,22 @@ def load_lines(path: Path) -> list[str]:
     data = json.loads(path.read_text(encoding="utf-8"))
     rows = data.get("lines", []) if isinstance(data, dict) else data
     return [row["text"] if isinstance(row, dict) else str(row) for row in rows]
+
+
+def voice_lines(v: voices.Voice) -> list[str]:
+    """The voice's golden set, or its own bank lines when it has none.
+
+    WHY the fallback: a voice made in the Creator has a soundboard long before
+    anyone writes it a golden file, and a delivery must still be measured on
+    sentences that voice actually speaks.
+    """
+    path = golden_lines_path(v.id)
+    if path.exists():
+        return load_lines(path)
+    rows = store.db().execute(
+        "SELECT text FROM lines WHERE voice_id=? AND lang=? AND source='bank' ORDER BY created, rowid",
+        (v.id, v.lang)).fetchall()
+    return [r["text"] for r in rows]
 
 
 def require_tts() -> None:
@@ -171,9 +187,9 @@ def promote(existing: dict, rows: list[Row], v: voices.Voice) -> dict:
 def cmd_arm(args: argparse.Namespace) -> int:
     require_tts()
     v = voices.load_voice(args.voice)
-    lines = load_lines(golden_lines_path(v.id))[: args.lines]
+    lines = voice_lines(v)[: args.lines]
     if not lines:
-        sys.exit(f"no golden lines for {v.id}")
+        sys.exit(f"no golden or bank lines for {v.id}")
     ids = args.spice or [s.id for s in SPICES]
     unknown = [i for i in ids if i not in _BY_ID]
     if unknown:
