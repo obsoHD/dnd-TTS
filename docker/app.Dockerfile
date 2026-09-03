@@ -34,8 +34,14 @@ COPY configs/ /app/configs/
 COPY app/ /app/app/
 COPY scripts/ /app/scripts/
 COPY tests/golden/ /app/tests/golden/
+COPY web/ /app/web/
+# The phrase bank ships in the image; the entrypoint seeds it into the /data volume
+# on first boot so an operator can edit the live copy without a rebuild.
+COPY data/phrases.json /app/seed/phrases.json
 
 EXPOSE 8020
 # M2 service entrypoint. In M1 run one-shot commands instead:
 #   docker compose -f docker/compose.yml run --rm app python -m scripts.bag_cli render --voice bag --text "..."
+COPY docker/entrypoint.sh /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]

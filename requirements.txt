@@ -16,6 +16,9 @@ uvicorn[standard]
 pydantic
 pyyaml
 requests
+prometheus-client
+websockets
+python-multipart
 
 numpy
 scipy

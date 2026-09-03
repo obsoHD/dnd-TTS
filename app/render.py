@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 import time
 from dataclasses import asdict, dataclass
 from functools import lru_cache
@@ -140,7 +141,11 @@ def _best(candidates: list[tuple[int, TakeScore]]) -> tuple[int, TakeScore]:
     return max(candidates, key=lambda c: (c[1].sane, c[1].sim))
 
 
-def render_line(voice: Voice, text: str, take_no: int = 0, n_takes: int = 2) -> RenderResult:
+def render_line(voice: Voice, text: str, take_no: int = 0, n_takes: int = 2, *,
+                cancel: threading.Event | None = None) -> RenderResult:
+    """``cancel`` is the worker's cooperative stop: checked before each round of
+    takes and inside the streaming read, so a live line pre-empts a batch job
+    within one chunk instead of one full render."""
     t0 = time.perf_counter()
     c = canon.canonicalize(text, lang=voice.lang, banned=set(voice.banned_tokens))
     speaker = speaker_gate_for(voice)
@@ -150,10 +155,14 @@ def render_line(voice: Voice, text: str, take_no: int = 0, n_takes: int = 2) -> 
     seen: list[tuple[int, TakeScore]] = []          # (index into pool, score)
     pool: list[tuple[int, bytes, int]] = []
     chosen: tuple[int, TakeScore] | None = None
+    # Forwarded only when given, so the call stays byte-identical for M1 callers
+    # and their test doubles that predate the kwarg.
+    stop = {"cancel": cancel} if cancel is not None else {}
     for offset, count in ((0, n), (RETRY_OFFSET, RETRY_TAKES)):
+        tts_client.check_cancel(cancel)
         t = time.perf_counter()
         takes = tts_client.synth_many(c.text, voice.ref_tts_path, voice.ref_transcript,
-                                      _seeds(voice, take_no, offset, count), voice.sampler, budget)
+                                      _seeds(voice, take_no, offset, count), voice.sampler, budget, **stop)
         timings["synth"] += time.perf_counter() - t
         t = time.perf_counter()
         idx, scores = gate.select(speaker, takes, c, voice.lang, _threshold(voice),
