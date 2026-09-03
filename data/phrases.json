@@ -182,6 +182,13 @@
     "Chcete mapu k pokladu? Mám ich dvadsať, všetky pravé — a všetky vedú na to isté miesto!",
     "Tento elixír nebol testovaný na zvieratách! Na ľuďoch áno — a väčšina z nich sa vrátila!",
     "Psst, mám niečo pod pultom! Nie je to kradnuté — iba to majiteľ ešte nestihol nahlásiť."
+   ],
+   "Toto nepredám": [
+    "Toto ti nepredám.",
+    "Nie. Toto nie je na predaj. Ani za zlato, ani za tvoju dušu.",
+    "Toto? Toto si nekúpiš. Ani ty, ani tvoja babka.",
+    "Zabudni. Tento kus ide do rakvy so mnou.",
+    "Za toto ti nedám ani zlomený medenák. Ber alebo nechaj tak."
    ]
   },
   "npc": {
@@ -256,6 +263,13 @@
     "Nech vás bohovia sprevádzajú. Ak nie oni — tak aspoň dobrý meč.",
     "Dovidenia! Dvere vám ostanú otvorené — ak prídete s peniazmi, nie s vojskom.",
     "Choďte v pokoji! Vráťte sa s príbehmi — nie na nosidlách."
+   ],
+   "Choď do piče": [
+    "Choď do piče.",
+    "Nie. A teraz zmizni.",
+    "Ani náhodou. Prac sa.",
+    "Nechaj ma na pokoji, kým ťa niekto nepočuje.",
+    "Odpáľ. Nemám na teba ani čas, ani náladu."
    ]
   }
  },
@@ -442,6 +456,13 @@
     "I've got a map to buried treasure — the treasure's mine, but the map's yours for fifty!",
     "Care for a potion of unknown effect? The last buyer was thrilled — or was it screaming?",
     "This amulet is definitely not cursed, and I'll say that as many times as you need!"
+   ],
+   "Not selling that": [
+    "I am not selling you that.",
+    "No. That one is not for sale. Not for gold, not for your soul.",
+    "That? You could not buy that. Not you, not your grandmother.",
+    "Forget it. That piece goes in the coffin with me.",
+    "For that I would not give you a bent copper. Take it or leave it."
    ]
   },
   "npc": {
@@ -516,6 +537,13 @@
     "Off you go, then. Try not to die — it's terrible for repeat business.",
     "Farewell, friend! Keep your blade sharp and your wits sharper — one of them will rust anyway.",
     "Go on, the road's waiting. It's been waiting for years — it's very patient, unlike me."
+   ],
+   "Piss off": [
+    "Piss off.",
+    "No. Now get lost.",
+    "Not a chance. Move along.",
+    "Leave me be, before someone hears you.",
+    "Clear off. I have neither the time nor the mood for you."
    ]
   }
  }

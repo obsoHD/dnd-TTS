@@ -24,8 +24,20 @@ DEFAULT_SLOTS = 7       # defaults fill 1-7; slot 8 stays free for the DM's own 
 # The NPC bank is generic, so both neutral NPC voices get their own copy of
 # every line; every other bank key names the voice that speaks it.
 NPC_VOICES = ("male", "female")
-# The category whose first line lives on the T key instead of a slot (§4).
-TEN_NIE_CATEGORY = {"sk": "Ten nie.", "en": "Not that one."}
+# The signature refusal: the category whose first line lives on the giant red
+# T tile instead of a slot (§4). Every voice has its own, because "Ten nie." is
+# Bag's line and no one else's -- the merchant refuses to sell, an NPC tells you
+# where to go. Keyed by the bank key, so both NPC voices share the NPC one.
+SIGNATURE_CATEGORY = {
+    "sk": {"bag": "Ten nie.", "shopkeep": "Toto nepredám", "npc": "Choď do piče"},
+    "en": {"bag": "Not that one.", "shopkeep": "Not selling that", "npc": "Piss off"},
+}
+BANK_KEY = {"male": "npc", "female": "npc"}       # every other voice is its own bank key
+
+
+def signature_category(voice_id: str, lang: str) -> str | None:
+    """The signature category for this voice, or None for a voice with no bank."""
+    return SIGNATURE_CATEGORY.get(lang, {}).get(BANK_KEY.get(voice_id, voice_id))
 
 # One row per tile, joined to the pinned render because a tile's state is
 # nothing but that render's verdict. Bank order is insertion order; ``rowid``
@@ -77,11 +89,12 @@ def import_bank(path: Path | None = None) -> int:
 
 def _seed_favourites(voice_id: str, lang: str, categories: dict[str, list[str]]) -> None:
     """Default favourites for a voice/language that has none: the first line of
-    each category on slots 1-7, in bank order, skipping the Ten nie. category
+    each category on slots 1-7, in bank order, skipping the signature category
     because its first line has the T key. Only runs when nothing is starred or
     slotted yet, so the DM's own row survives every re-import."""
+    signature = signature_category(voice_id, lang)
     firsts = [(category, texts[0]) for category, texts in categories.items()
-              if texts and category != TEN_NIE_CATEGORY.get(lang)]
+              if texts and category != signature]
     with closing(store.db()) as con, con:
         taken = con.execute(
             "SELECT 1 FROM lines WHERE voice_id=? AND lang=? AND (favourite OR slot IS NOT NULL) LIMIT 1",
@@ -122,9 +135,9 @@ def _lines(voice_id: str, lang: str) -> list[dict]:
         return [_entry(row) for row in con.execute(_BOARD_SQL, (voice_id, lang))]
 
 
-def _ten_nie(lines: list[dict], lang: str) -> str | None:
-    """The first line of the Ten nie. category: the giant tile on the T key."""
-    category = TEN_NIE_CATEGORY.get(lang)
+def _signature(lines: list[dict], voice_id: str, lang: str) -> str | None:
+    """The first line of this voice's signature category: the giant T tile."""
+    category = signature_category(voice_id, lang)
     return next((line["id"] for line in lines if line["category"] == category), None)
 
 
@@ -141,7 +154,10 @@ def board(voice_id: str, lang: str) -> dict:
         if line["slot"] is not None and 1 <= line["slot"] <= SLOTS:
             favourites[line["slot"] - 1] = line["id"]
     return {"categories": list(dict.fromkeys(line["category"] for line in lines)),
-            "lines": lines, "favourites": favourites, "ten_nie": _ten_nie(lines, lang)}
+            "lines": lines, "favourites": favourites,
+            # Key kept from M2: the Play page draws whatever line it names on the
+            # T tile, and that line is now the voice's own refusal, not Bag's.
+            "ten_nie": _signature(lines, voice_id, lang)}
 
 
 def get_line(line_id: str) -> dict:
@@ -208,10 +224,11 @@ def next_take(line_id: str) -> dict:
 
 def prerender_plan(voice_id: str, lang: str) -> list[str]:
     """Line ids in the order the worker should fill the board: the favourites
-    row by key, then the starred rest, then Ten nie., then everything else in
-    bank order, so the tiles the DM reaches for first are the first ready."""
+    row by key, then the starred rest, then the signature refusal, then
+    everything else in bank order, so the tiles the DM reaches for first are the
+    first ready."""
     lines = _lines(voice_id, lang)
-    ten_nie = _ten_nie(lines, lang)
+    ten_nie = _signature(lines, voice_id, lang)
     on_row = sorted((line for line in lines if line["slot"]), key=lambda line: line["slot"])
     starred = [line for line in lines if line["favourite"] and not line["slot"]]
     first = [line for line in lines if line["id"] == ten_nie]

@@ -148,11 +148,25 @@ def test_favourites_default_to_first_line_of_each_category_and_ten_nie_on_t(bank
     assert en["favourites"][6] is not None and en["favourites"][7] is None
 
 
-def test_favourites_default_for_other_voices_and_none_for_the_t_key(bank):
+def test_every_voice_gets_its_own_signature_line_on_the_t_key(bank):
+    """Bag's "Ten nie." is Bag's; the merchant refuses to sell and an NPC tells
+    you where to go. Each voice's signature category is kept off the slots."""
+    npc_categories = list(bank["sk"]["npc"])
+    signature = board.signature_category("male", "sk")
+    slotted = [cat for cat in npc_categories if cat != signature]
     npc = board.board("male", "sk")
-    assert npc["favourites"][:6] == [store.line_id("male", "sk", cat, texts[0])
-                                     for cat, texts in bank["sk"]["npc"].items()]
-    assert npc["favourites"][6:] == [None, None] and npc["ten_nie"] is None
+    assert npc["favourites"][:len(slotted)] == [store.line_id("male", "sk", cat, bank["sk"]["npc"][cat][0])
+                                                for cat in slotted]
+    assert npc["ten_nie"] == store.line_id("male", "sk", signature, bank["sk"]["npc"][signature][0])
+    # Both NPC voices share the NPC bank, so each owns its own copy of the line.
+    female = board.board("female", "sk")["ten_nie"]
+    assert female == store.line_id("female", "sk", signature, bank["sk"]["npc"][signature][0])
+    assert female != npc["ten_nie"]
+    shop = board.board("shopkeep", "sk")
+    shop_signature = board.signature_category("shopkeep", "sk")
+    assert shop["ten_nie"] == store.line_id("shopkeep", "sk", shop_signature,
+                                            bank["sk"]["shopkeep"][shop_signature][0])
+    assert board.signature_category("unknown-voice", "sk") is None
 
 
 def test_status_derives_from_the_pinned_render(bank):
