@@ -325,9 +325,9 @@ DEFAULT_MODE = "bro"
 # no published figure; Czech is the accepted proxy), slow/menacing 3.5-4.5,
 # hyped/furious/panic 6.5-7.5; English runs ~15% lower. Words/sec was wrong for
 # Slovak's long words and pinned every line at the cap.
-MODE_SPS = {"bro": 6.6, "deadpan": 5.8, "smug": 6.0, "pissed": 7.0,
-            "menace": 4.0, "panic": 7.2, "soft": 4.2, "friendly": 5.8, "business": 5.6,
-            "happy": 6.4, "curious": 5.8, "sad": 4.4, "disgusted": 5.6, "awe": 4.4}
+MODE_SPS = {"bro": 7.0, "deadpan": 6.0, "smug": 6.2, "pissed": 7.2,
+            "menace": 4.8, "panic": 7.4, "soft": 4.8, "friendly": 6.2, "business": 6.0,
+            "happy": 6.8, "curious": 6.2, "sad": 4.8, "disgusted": 6.0, "awe": 4.8}
 EN_RATE_SCALE = 0.85
 _VOW = "aeiouyáéíóúýäô"
 _SYL_DIPH = re.compile(r"i[aeu]|ô")
@@ -462,9 +462,9 @@ def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
 
 # max internal pause kept per delivery mode (s): hyped/furious modes snap,
 # menacing/soft modes are allowed to breathe
-MODE_PAUSE = {"bro": 0.30, "deadpan": 0.40, "smug": 0.35, "pissed": 0.28,
-              "menace": 0.60, "panic": 0.25, "soft": 0.55, "friendly": 0.35, "business": 0.40,
-              "happy": 0.30, "curious": 0.40, "sad": 0.60, "disgusted": 0.40, "awe": 0.60}
+MODE_PAUSE = {"bro": 0.30, "deadpan": 0.35, "smug": 0.32, "pissed": 0.28,
+              "menace": 0.50, "panic": 0.25, "soft": 0.45, "friendly": 0.32, "business": 0.35,
+              "happy": 0.30, "curious": 0.35, "sad": 0.50, "disgusted": 0.35, "awe": 0.50}
 
 
 def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4, internal: bool = True) -> bytes:
@@ -665,14 +665,14 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
             # the model's own speed tokens carry the pace; post-stretch nudges.
             # Speeding up is far more tolerant than slowing down, so allow
             # +18% up but only -6% down; small dead-band.
-            up, down = TEMPO_UP.get(tempo_lvl, 1.2), TEMPO_DOWN.get(tempo_lvl, 0.94)
+            up, down = TEMPO_UP.get(tempo_lvl, 1.3), TEMPO_DOWN.get(tempo_lvl, 1.0)
             f = max(down, min(up, target_base * _cue(s) / sps))
             if 0.97 <= f <= 1.03:
                 f = 1.0
         # the director's per-sentence pace (slow/normal/fast) on top of the measure
         mult = PACE_MULT.get(paces[si] if paces and si < len(paces) else "normal", 1.0)
         if mult != 1.0:
-            f = max(TEMPO_DOWN.get(tempo_lvl, 0.94), min(TEMPO_UP.get(tempo_lvl, 1.2), f * mult))
+            f = max(TEMPO_DOWN.get(tempo_lvl, 1.0), min(TEMPO_UP.get(tempo_lvl, 1.3), f * mult))
         y = seg.astype(np.float32) / 32768.0
         if f != 1.0:
             y = _stretch_np(y, sr, f)
@@ -878,7 +878,8 @@ def _render(text: str, voice_key: str, mode_key: str,
         meta["pace"] = ",".join(f"{x:.2f}" for x in factors)
         sp = 1.0                                   # already paced per sentence
     else:
-        sp = speed
+        sp = max(1.0, speed)                  # never below native speed
+        meta["adaptive_speed"] = round(sp, 2)
     return _process(pcm, sr, sp, spc), meta, drawls
 
 
@@ -1270,16 +1271,17 @@ def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
     return {"voice": voice, "lang": key, "types": types[key]}
 
 
-PACE_MULT = {"slow": 0.86, "normal": 1.0, "fast": 1.2}
+PACE_MULT = {"slow": 0.94, "normal": 1.0, "fast": 1.15}   # "slow" = less speed-up, never slower
 # voice-speed context dial, -2 (very slow) .. +2 (rushed): sets the model's own
 # speed token, scales the pace target and the pause cap. The director sets it
 # when auto delivery is on.
 TEMPO_TOKEN = {-2: "<|prosody:speed_very_slow|>", -1: "<|prosody:speed_slow|>", 0: "",
                1: "<|prosody:speed_fast|>", 2: "<|prosody:speed_very_fast|>"}
-TEMPO_TARGET = {-2: 0.75, -1: 0.87, 0: 1.0, 1: 1.15, 2: 1.3}
-# stretch bounds per dial position (speech compression is tolerant; expansion less so)
-TEMPO_UP = {-2: 1.0, -1: 1.05, 0: 1.2, 1: 1.32, 2: 1.45}
-TEMPO_DOWN = {-2: 0.72, -1: 0.82, 0: 0.94, 1: 0.97, 2: 1.0}
+TEMPO_TARGET = {-2: 0.85, -1: 0.93, 0: 1.0, 1: 1.12, 2: 1.25}
+# stretch bounds per dial position. Speech COMPRESSION stays natural to ~1.5x;
+# expansion is what sounds worked — so the floor is native speed, always.
+TEMPO_UP = {-2: 1.0, -1: 1.1, 0: 1.3, 1: 1.4, 2: 1.5}
+TEMPO_DOWN = {-2: 1.0, -1: 1.0, 0: 1.0, 1: 1.0, 2: 1.0}
 TEMPO_PAUSE = {-2: 1.5, -1: 1.2, 0: 1.0, 1: 0.8, 2: 0.65}
 DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "suché, bez emócií, ironické",
                      "smug": "samoľúby, chvastavý", "pissed": "nahnevaný, ochranársky, hlasný",

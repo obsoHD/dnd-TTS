@@ -106,6 +106,16 @@
         <label>Text</label>
         <textarea id="text" placeholder="Napíš…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
         <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code>; <code>...</code> or two TABs = a long one. <b>Fix text</b> cleans typos and keeps your marks. <b>Script:</b> start lines with a voice tag — <code>[bag] …</code> <code>[shopkeep] …</code> <code>[clara] …</code> — and the whole exchange plays, each line in its voice.</div>
+        <div class="btns">
+          <button class="go" id="go">Speak now</button>
+          <button class="dir" id="direct">Direct &amp; speak</button>
+          <button class="ghost" id="fix">Fix text</button>
+          <button class="ghost" id="dl" disabled>Download</button>
+          <span class="status" id="status"></span>
+        </div>
+        <audio id="audio" controls></audio>
+        <div class="meta" id="meta"></div>
+        <div class="breakdown" id="breakdown"></div>
       </section>
 
       <section class="sec">
@@ -122,13 +132,12 @@
               <span class="chk" style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="tempoauto" checked> default</span>
             </label>
             <input type="range" id="tempo" min="-2" max="2" step="1" value="0">
-            <div class="hint" style="margin-top:2px">very slow · slow · normal · brisk · rushed — sets the model's own speed, the pace target and pause length.</div>
+            <div class="hint" style="margin-top:2px">natural · gentle · normal · brisk · rushed — never slower than the voice's own pace; sets the speed-up, the pace target and pause length.</div>
           </div>
           <div class="box">
             <h3>Directed — Direct &amp; speak</h3>
             <p>The director reads the line and the scene, picks the register, places pauses between thoughts and sets the pace per sentence plus an overall speed — one take, one voice. ~1 s extra.</p>
-            <div class="breakdown" id="breakdown"></div>
-            <div class="hint" id="dirhint">The breakdown appears here after a directed take.</div>
+            <div class="hint" id="dirhint">After a directed take, the breakdown appears under the player above.</div>
           </div>
         </div>
         <div class="grid2" style="margin-top:14px">
@@ -146,22 +155,14 @@
               <span>Fine speed · <span class="val" id="speedv">auto</span></span>
               <span class="chk" style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="autospeed" checked> auto</span>
             </label>
-            <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.0">
+            <input type="range" id="speed" min="1.0" max="1.6" step="0.02" value="1.0">
           </div>
         </div>
         <div class="grid2" style="margin-top:10px">
           <div><label>Seed (optional — same seed, same take)</label><input type="text" id="seed" placeholder="leave empty for best-of-2" inputmode="numeric"></div>
           <div><label>Recent takes</label><div id="history" class="hint" style="margin:0"></div></div>
         </div>
-        <div class="btns">
-          <button class="go" id="go">Speak now</button>
-          <button class="dir" id="direct">Direct &amp; speak</button>
-          <button class="ghost" id="fix">Fix text</button>
-          <button class="ghost" id="dl" disabled>Download</button>
-          <span class="status" id="status"></span>
-        </div>
-        <audio id="audio" controls></audio>
-        <div class="meta" id="meta"></div>
+
       </section>
     </div>
 
@@ -207,7 +208,7 @@ const MODEDESC = {bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery", sm
   friendly:"warm, welcoming", business:"matter-of-fact, businesslike", happy:"delighted, upbeat", curious:"curious, intrigued",
   sad:"sad, heavy", disgusted:"disgusted, repulsed", awe:"awestruck, hushed"};
 const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
-const TEMPO_NAMES = {"-2":"very slow","-1":"slow","0":"normal","1":"brisk","2":"rushed"};
+const TEMPO_NAMES = {"-2":"natural (no speed-up)","-1":"gentle","0":"normal","1":"brisk","2":"rushed"};
 const SENT_SPLIT = /(?<=[.!?…])\s+/;
 
 let voice = "bag", mode = "bro", lang = "sk", lastURL = null;
@@ -287,11 +288,11 @@ function busy(b, msg){ ["go","direct","fix","dl"].forEach(id => $(id).disabled =
 function showBreakdown(text, modes, paces, tempo, pauses){
   const sents = text.split(SENT_SPLIT).filter(s => s.trim());
   const ms = (modes||"").split(",").filter(Boolean), ps = (paces||"").split(",").filter(Boolean), pz = (pauses||"").split(",");
-  if (!ms.length) { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; return; }
+  if (!ms.length) { $("breakdown").style.display = "none"; return; }
   let html = `<div><span>part</span><span>mode</span><span>pace</span><span>pause</span></div>`;
   sents.forEach((s, i) => { html += `<div><span>${esc(s)}</span><span class="m">${esc(ms[i]||"")}</span><span class="pc">${esc(ps[i]||"")}</span><span class="pc">${esc((pz[i]||"none") === "none" ? "" : pz[i])}</span></div>`; });
   if (tempo !== null && tempo !== "") html += `<div><span>overall speed</span><span class="m">${esc(TEMPO_NAMES[tempo]||tempo)}</span><span></span><span></span></div>`;
-  $("breakdown").innerHTML = html; $("breakdown").style.display = "block"; $("dirhint").style.display = "none";
+  $("breakdown").innerHTML = html; $("breakdown").style.display = "block";
 }
 
 const takes = [];
@@ -330,7 +331,7 @@ async function speak(directed){
     if (!r.ok) throw new Error("server " + r.status);
     const hz = r.headers.get("X-Bag-Hz"), sp = r.headers.get("X-Bag-Speed"), chosen = r.headers.get("X-Bag-Mode"),
           paces = r.headers.get("X-Bag-Paces"), modes = r.headers.get("X-Bag-Modes"), tempo = r.headers.get("X-Bag-Tempo"), drawls = r.headers.get("X-Bag-Drawls"), pauses = r.headers.get("X-Bag-Pauses");
-    if (directed) showBreakdown(text, modes, paces, tempo, pauses); else { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; }
+    if (directed) showBreakdown(text, modes, paces, tempo, pauses); else $("breakdown").style.display = "none";
     const blob = await r.blob(); play(blob);
     const seedUsed = r.headers.get("X-Bag-Seed");
     $("audio").onloadedmetadata = () => remember((directed ? "directed: " : "") + text.slice(0, 40) + (seedUsed ? " · seed " + seedUsed : ""), blob, $("audio").duration.toFixed(1));
