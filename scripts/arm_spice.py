@@ -51,7 +51,7 @@ class Row:
     median_spiced: float | None
     drop: float | None
     min_sim: float | None
-    verdict: str            # armed | drop | floor | refused
+    verdict: str            # armed | drop | floor | thin | refused
     reason: str = ""
 
 
@@ -118,21 +118,38 @@ def refusal(spice: Spice, voice: voices.Voice) -> str | None:
     return None
 
 
+MIN_PAIRS = 10          # below this the measurement says nothing about the spice
+
+
 def evaluate(spice: Spice, bare: list[float], spiced: list[float] | None, reason: str | None,
             strict: float) -> Row:
-    """One candidate's verdict: promote only when the median drop is at most
-    MAX_DROP and no take in this run -- bare or spiced -- fell below `strict`
-    (docs/M3-contracts.md). A bare dip means the run itself is suspect, not the spice."""
+    """One candidate's verdict, measured on paired takes of the same lines.
+
+    Promote only when the median drop is at most MAX_DROP and no *spiced* take
+    fell below ``strict`` (docs/M3-contracts.md). Lines whose bare take is
+    already under ``strict`` are dropped from the comparison first: the voice
+    cannot say those plainly either, so counting them against a delivery blames
+    the wrong thing -- and because the bare run is shared, one such line would
+    otherwise fail every candidate with an identical minimum.
+    """
     if reason is not None:
         return Row(spice, 0, None, None, None, None, "refused", reason)
-    mb, ms = median(bare), median(spiced)
-    lo = min(bare + spiced)
+    pairs = [(b, sp) for b, sp in zip(bare, spiced) if b >= strict]
+    dropped = len(bare) - len(pairs)
+    note = f"{dropped} line(s) excluded: bare take under strict" if dropped else ""
+    if len(pairs) < MIN_PAIRS:
+        return Row(spice, len(pairs), median(bare), median(spiced), None, None, "thin",
+                   f"only {len(pairs)} usable line(s); {note or 'too few lines'}")
+    mb, ms = median([b for b, _ in pairs]), median([sp for _, sp in pairs])
+    lo = min(sp for _, sp in pairs)
     drop = mb - ms
     if lo < strict:
-        return Row(spice, len(bare), mb, ms, drop, lo, "floor", f"min sim {lo:.3f} < strict {strict:.3f}")
+        return Row(spice, len(pairs), mb, ms, drop, lo, "floor",
+                   f"min sim {lo:.3f} < strict {strict:.3f}; {note}".rstrip("; "))
     if drop > MAX_DROP:
-        return Row(spice, len(bare), mb, ms, drop, lo, "drop", f"drop {drop:.3f} > {MAX_DROP:.2f}")
-    return Row(spice, len(bare), mb, ms, drop, lo, "armed")
+        return Row(spice, len(pairs), mb, ms, drop, lo, "drop",
+                   f"drop {drop:.3f} > {MAX_DROP:.2f}; {note}".rstrip("; "))
+    return Row(spice, len(pairs), mb, ms, drop, lo, "armed", note)
 
 
 def measure(v: voices.Voice, lines: list[str], candidates: list[Spice]) -> list[Row]:
@@ -140,6 +157,11 @@ def measure(v: voices.Voice, lines: list[str], candidates: list[Spice]) -> list[
     own takes -- all in this one run, one take per line (§ above)."""
     strict = float(v.gate["strict"])
     bare = [render.render_line(v, line, take_no=0).sim for line in lines]
+    weak = sum(1 for sim in bare if sim < strict)
+    if weak:
+        # Worth saying out loud: these lines would fail the gate at the table too.
+        print(f"note       {weak}/{len(bare)} bare take(s) under strict {strict:.3f} "
+              f"(worst {min(bare):.3f}) -- excluded from every comparison")
     rows = []
     for spice in candidates:
         reason = refusal(spice, v)
