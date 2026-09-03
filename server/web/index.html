@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bag</title>
+<style>
+  :root{
+    --bg:#1a1613; --panel:#26201b; --edge:#3a3029; --ink:#efe6d8;
+    --muted:#a89a86; --accent:#c9962f; --accent2:#8a5a2b; --ok:#7fa860;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);
+       color:var(--ink);font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;
+       display:flex;align-items:flex-start;justify-content:center;padding:32px 16px}
+  .wrap{width:100%;max-width:680px}
+  h1{font-size:30px;margin:0 0 2px;letter-spacing:.5px}
+  h1 .em{color:var(--accent)}
+  .sub{color:var(--muted);margin:0 0 22px;font-style:italic;font-size:15px}
+  .card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;
+        padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  textarea{width:100%;min-height:110px;resize:vertical;background:#1c1713;color:var(--ink);
+           border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit}
+  textarea:focus{outline:none;border-color:var(--accent)}
+  .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px}
+  .fld{flex:1;min-width:150px}
+  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;
+        color:var(--muted);margin-bottom:6px}
+  select,input[type=range]{width:100%}
+  select{background:#1c1713;color:var(--ink);border:1px solid var(--edge);
+         border-radius:8px;padding:8px 10px;font:inherit}
+  input[type=range]{accent-color:var(--accent)}
+  .val{color:var(--accent);font-variant-numeric:tabular-nums}
+  .btns{display:flex;gap:12px;margin-top:20px;align-items:center}
+  button{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
+         border:0;border-radius:10px;padding:12px 22px;font:600 16px/1 inherit;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  button.ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);font-weight:400}
+  .status{color:var(--muted);font-size:13px;min-height:18px;margin-left:4px}
+  audio{width:100%;margin-top:18px;display:none}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .chip{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:20px;
+        padding:6px 13px;font-size:13px;cursor:pointer}
+  .chip:hover{border-color:var(--accent)}
+  .meta{margin-top:10px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mr. <span class="em">Bag</span></h1>
+  <p class="sub">Type. He speaks. He will not be nice about it.</p>
+
+  <div class="card">
+    <textarea id="text" placeholder="Napíš, čo má Bag povedať…">Nie. To si nevezmeš, kamoš. Tie prekliate veci nie sú tvoje.</textarea>
+
+    <div class="chips" id="chips">
+      <span class="chip" data-t="Zase ja? No jasné. Kto iný by to spravil.">smug</span>
+      <span class="chip" data-t="To je tvoj plán? Ja som len vak a mám lepší.">taunt</span>
+      <span class="chip" data-t="Nie. Toto nie. Nikdy nie toto.">refuse</span>
+      <span class="chip" data-t="Hoď si na to. A modli sa.">roll</span>
+    </div>
+
+    <div class="row">
+      <div class="fld">
+        <label>Emotion</label>
+        <select id="emotion">
+          <option value="">— none —</option>
+          <option value="anger">anger</option>
+          <option value="amusement" selected>amusement</option>
+          <option value="contemplation">contemplation</option>
+          <option value="confusion">confusion</option>
+          <option value="enthusiasm">enthusiasm</option>
+          <option value="surprise">surprise</option>
+          <option value="sadness">sadness</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>Space</label>
+        <select id="space">
+          <option value="dry">dry (studio)</option>
+          <option value="room" selected>room</option>
+          <option value="hall">hall (big)</option>
+          <option value="bag">inside the bag</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>Speed · <span class="val" id="speedv">1.15×</span></label>
+        <input type="range" id="speed" min="0.8" max="1.6" step="0.05" value="1.15">
+      </div>
+    </div>
+
+    <div class="btns">
+      <button id="go">Speak</button>
+      <button class="ghost" id="dl" disabled>Download</button>
+      <span class="status" id="status"></span>
+    </div>
+
+    <audio id="audio" controls></audio>
+    <div class="meta" id="meta"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const speed = $("speed"), speedv = $("speedv");
+speed.oninput = () => speedv.textContent = (+speed.value).toFixed(2) + "×";
+
+$("chips").onclick = e => { if(e.target.dataset.t) $("text").value = e.target.dataset.t; };
+
+let lastURL = null;
+async function speak(){
+  const text = $("text").value.trim();
+  if(!text){ $("status").textContent = "…say something."; return; }
+  $("go").disabled = true; $("dl").disabled = true;
+  $("status").textContent = "Bag is thinking…";
+  const t0 = performance.now();
+  try{
+    const r = await fetch("/say", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        text, speed:+speed.value, space:$("space").value, emotion:$("emotion").value
+      })
+    });
+    if(!r.ok) throw new Error("server "+r.status);
+    const hz = r.headers.get("X-Bag-Hz"), tries = r.headers.get("X-Bag-Tries");
+    const blob = await r.blob();
+    if(lastURL) URL.revokeObjectURL(lastURL);
+    lastURL = URL.createObjectURL(blob);
+    const a = $("audio"); a.src = lastURL; a.style.display="block"; a.play();
+    const secs = ((performance.now()-t0)/1000).toFixed(1);
+    $("status").textContent = "done in " + secs + "s";
+    $("meta").textContent = "pitch " + hz + " Hz · seed tries [" + tries + "]";
+    $("dl").disabled = false;
+  }catch(err){
+    $("status").textContent = "error: " + err.message;
+  }finally{
+    $("go").disabled = false;
+  }
+}
+$("go").onclick = speak;
+$("text").addEventListener("keydown", e => {
+  if((e.metaKey||e.ctrlKey) && e.key==="Enter") speak();
+});
+$("dl").onclick = () => {
+  if(!lastURL) return;
+  const a = document.createElement("a");
+  a.href = lastURL; a.download = "bag.wav"; a.click();
+};
+</script>
+</body>
+</html>
