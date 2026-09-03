@@ -42,6 +42,7 @@ COPY data/phrases.json /app/seed/phrases.json
 EXPOSE 8020
 # M2 service entrypoint. In M1 run one-shot commands instead:
 #   docker compose -f docker/compose.yml run --rm app python -m scripts.bag_cli render --voice bag --text "..."
-COPY docker/entrypoint.sh /app/entrypoint.sh
+# +x explicitly: the build host may be a filesystem without an executable bit.
+COPY --chmod=0755 docker/entrypoint.sh /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"]
