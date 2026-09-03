@@ -15,6 +15,7 @@ docker run -d --name bag-orch \
   -v "$HOME/dnd-tts/cache:/cache" \
   -e BAG_TTS_URL="http://127.0.0.1:8010" \
   -e BAG_REF="/refs/bag_ref.wav" \
+  -e BAG_LLM_MODEL="${BAG_LLM_MODEL:-huihui_ai/qwen3.8-abliterated:27b}" \
   bag-orchestrator
 
 echo "Bag UI → http://$(hostname -I | awk '{print $1}'):8020/"

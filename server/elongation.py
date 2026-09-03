@@ -16,13 +16,21 @@ CPU-only (the GPUs are full with the model); alignment of a short line is fast.
 """
 from __future__ import annotations
 
+import re
 import struct
 import subprocess
 
 MS_PER_STAR = 150
 MAX_STARS = 6
-BREAK_MS = 180                 # a break is a short, deterministic silence
-BREAK_CHARS = {"\t", "—", "–", "…"}   # TAB, em/en dash, ellipsis
+BREAK_MS = 250                 # one break = a short, deterministic silence; they stack
+BREAK_CHARS = {"\t", "—", "–", "…"}   # TAB, em/en dash, ellipsis (after _norm_breaks)
+_HYPHEN_BREAK = re.compile(r"\s[-–]\s")
+
+
+def _norm_breaks(text: str) -> str:
+    """People (and LLMs) write pauses as '...' and ' - '; fold them into the
+    canonical break characters so they behave like TAB / em dash."""
+    return _HYPHEN_BREAK.sub(" — ", text.replace("...", "…"))
 
 # Slovak diacritics -> ASCII, 1:1 at the character level so vowel positions are
 # preserved. MMS_FA aligns romanized text; we keep our own fold to map back.
@@ -62,8 +70,9 @@ def parse_marks(text: str):
     """Pull the markup out of the text. Returns
     (clean_text_for_tts, aligner_words, marks, breaks) where
       marks  = [(aligner_word_index, vowel_index_in_word, stars)]  -> stretch
-      breaks = [aligner_word_index]  -> short silence AFTER that word
+      breaks = [(aligner_word_index, count)]  -> count x BREAK_MS silence AFTER it
     Stars and break chars are stripped so the model speaks a clean line."""
+    text = _norm_breaks(text)
     disp, aligner_words, marks, breaks = [], [], [], []
     cur = []                                   # folded chars of the word being built
 
@@ -85,8 +94,12 @@ def parse_marks(text: str):
             continue
         if c in BREAK_CHARS:
             flush()
-            if aligner_words and (not breaks or breaks[-1] != len(aligner_words) - 1):
-                breaks.append(len(aligner_words) - 1)
+            if aligner_words:
+                idx = len(aligner_words) - 1
+                if breaks and breaks[-1][0] == idx:
+                    breaks[-1] = (idx, breaks[-1][1] + 1)    # stacked breaks add up
+                else:
+                    breaks.append((idx, 1))
             disp.append(" ")
             i += 1
             continue
@@ -125,6 +138,30 @@ def _stretch(seg: bytes, sr: int, add_sec: float) -> bytes:
     out = subprocess.run(cmd, input=seg, stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL).stdout
     return out or seg
+
+
+def _ramp(buf: bytes, nbytes: int, rising: bool) -> bytes:
+    """Linear fade over the first (rising) or last (falling) nbytes of buf.
+    Only the window is unpacked, so this is cheap on long clips."""
+    n = min(nbytes // 2, len(buf) // 2)
+    if n <= 0:
+        return buf
+    if rising:
+        head = struct.unpack("<%dh" % n, buf[:n * 2])
+        head = [int(v * (i + 1) / n) for i, v in enumerate(head)]
+        return struct.pack("<%dh" % n, *head) + buf[n * 2:]
+    tail = struct.unpack("<%dh" % n, buf[-n * 2:])
+    tail = [int(v * (n - i) / n) for i, v in enumerate(tail)]
+    return buf[:-n * 2] + struct.pack("<%dh" % n, *tail)
+
+
+def _splice(out: bytes, sb: int, eb: int, new: bytes, sr: int) -> bytes:
+    """Replace out[sb:eb] with `new`, fading ~4 ms on every cut edge so the
+    splice is click-free (a hard PCM cut at non-zero amplitude clicks)."""
+    w = int(sr * 0.004) * 2
+    left = _ramp(out[:sb], w, rising=False)
+    right = _ramp(out[eb:], w, rising=True)
+    return left + _ramp(_ramp(new, w, True), w, False) + right
 
 
 def elongate(pcm: bytes, sr: int, aligner_words, marks, breaks=None,
@@ -169,12 +206,13 @@ def elongate(pcm: bytes, sr: int, aligner_words, marks, breaks=None,
         if end <= start:
             end = flat[gi][1]
         edits.append(("stretch", start, end, stars * MS_PER_STAR / 1000.0, aligner_words[awi]))
-    for awi in breaks:
+    for awi, n in breaks:
         if awi < len(word_end):
-            edits.append(("break", word_end[awi], word_end[awi], break_ms / 1000.0, aligner_words[awi]))
+            edits.append(("break", word_end[awi], word_end[awi],
+                          n * break_ms / 1000.0, aligner_words[awi]))
 
     applied, out = [], pcm
-    # apply last-to-first so earlier byte offsets stay valid
+    # apply last-to-first so earlier byte offsets stay valid; every cut is faded
     for kind, t0, t1, amt, label in sorted(edits, key=lambda e: e[1], reverse=True):
         sb = int(t0 * sr) * 2
         if kind == "stretch":
@@ -182,9 +220,9 @@ def elongate(pcm: bytes, sr: int, aligner_words, marks, breaks=None,
             seg = out[sb:eb]
             if len(seg) < 2:
                 continue
-            out = out[:sb] + _stretch(seg, sr, amt) + out[eb:]
+            out = _splice(out, sb, eb, _stretch(seg, sr, amt), sr)
             applied.append((label, int(amt * 1000)))
         else:
-            out = out[:sb] + (b"\x00\x00" * int(amt * sr)) + out[sb:]
+            out = _splice(out, sb, sb, b"\x00\x00" * int(amt * sr), sr)
             applied.append((label + "|", int(amt * 1000)))
     return out, list(reversed(applied))

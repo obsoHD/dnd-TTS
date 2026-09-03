@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir "fastapi>=0.110" "uvicorn[standard]>=0.29" pydantic \
-      requests python-multipart \
+      requests python-multipart numpy pedalboard pyloudnorm \
  && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
       torch torchaudio
 

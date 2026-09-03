@@ -1,0 +1,60 @@
+# Voice Forge — the whole stack, as one unit.
+#   tts          Higgs Audio v3 on SGLang-Omni, pinned to GPU 1, warm-loaded
+#   orchestrator voice registry + F0 gate + markup (drawls/breaks) + finishing
+#                chain + LLM/STT glue + the browser UI
+# Both restart on failure and expose healthchecks; the orchestrator waits for
+# the TTS to be healthy before starting. Run from the repo root:
+#   docker compose -f docker/docker-compose.yml up -d --build
+name: voiceforge
+services:
+  tts:
+    build: { context: .., dockerfile: docker/Dockerfile }
+    image: bag-tts
+    container_name: bag-tts
+    restart: unless-stopped
+    command: >
+      serve --model-path /model --allowed-local-media-path /refs
+            --host 0.0.0.0 --port 8000
+    ports: ["8010:8000"]
+    volumes:
+      - ${BAG_MODEL_DIR:-${HOME}/dnd-tts/models/higgs-v3}:/model:ro
+      - ${BAG_REFS_DIR:-${HOME}/dnd-tts/refs}:/refs:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]          # GPU 1 = TTS (GPU 0 belongs to the LLMs)
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 30          # model load takes a while on first start
+      start_period: 180s
+
+  orchestrator:
+    build: { context: .., dockerfile: docker/orchestrator.Dockerfile }
+    image: bag-orchestrator
+    container_name: bag-orch
+    restart: unless-stopped
+    network_mode: host      # reaches tts (:8010), ollama (:11434), STT (:8443) on localhost
+    depends_on:
+      tts: { condition: service_healthy }
+    environment:
+      BAG_TTS_URL: http://127.0.0.1:8010
+      BAG_LLM_URL: http://127.0.0.1:11434
+      BAG_LLM_MODEL: ${BAG_LLM_MODEL:-huihui_ai/qwen3.8-abliterated:27b}
+      BAG_STT_URL: https://127.0.0.1:8443/stt
+      BAG_TARGET_WPS: ${BAG_TARGET_WPS:-2.9}
+    volumes:
+      - ${BAG_REFS_DIR:-${HOME}/dnd-tts/refs}:/refs:ro
+      - ${BAG_CACHE_DIR:-${HOME}/dnd-tts/cache}:/cache     # MMS aligner model cache
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8020/healthz',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s

@@ -22,16 +22,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import subprocess
+import threading
 import urllib.request
 import wave
 from io import BytesIO
 from urllib.parse import quote
 
+try:
+    import audioop                     # py3.12 (removed in 3.13; see _peak_normalize)
+except ImportError:                    # pragma: no cover
+    audioop = None
+
+import numpy as np
+import pyloudnorm as pyln
 import requests
 import urllib3
 from fastapi import FastAPI, File, Form, UploadFile
+from pedalboard import (Compressor, HighpassFilter, Limiter, LowpassFilter, Pedalboard,
+                        Reverb, time_stretch)
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
@@ -41,13 +52,17 @@ urllib3.disable_warnings()      # STT is https with a self-signed cert on the LA
 
 TTS_URL = os.environ.get("BAG_TTS_URL", "http://127.0.0.1:8010")
 LLM_URL = os.environ.get("BAG_LLM_URL", "http://127.0.0.1:11434")
-# 8B on CPU — GPU0/1 are saturated (lifeos 70B + TTS). Warm ~3-4s per reply.
-# Point BAG_LLM_MODEL at a 30B on a freed GPU for snappy replies (see notes).
-LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "llama3.1:8b-instruct-q8_0")
+# Qwen3-family 27B (uncensored build, so Bag's swearing isn't moralized). Its
+# Slovak is far better than llama3.1-8b's, and it fits on GPU 0 next to whisper.
+# Pin it in the broker's OLLAMA_KEEP (scripts/register_broker.sh <model>) or the
+# scheduler unloads it whenever the assistant frees VRAM.
+LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "huihui_ai/qwen3.8-abliterated:27b")
 STT_URL = os.environ.get("BAG_STT_URL", "https://127.0.0.1:8443/stt")
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
-# natural brisk dialogue pace the adaptive speed aims for (words per second)
-ADAPTIVE_TARGET_WPS = float(os.environ.get("BAG_TARGET_WPS", "2.9"))
+# Auto speed = the mode's native pace (the model's own speed tokens). Only when a
+# line is clearly slow (below SLOW wps) do we nudge it toward TARGET, capped 1.12x.
+ADAPTIVE_TARGET_WPS = float(os.environ.get("BAG_TARGET_WPS", "2.7"))
+ADAPTIVE_SLOW_WPS = float(os.environ.get("BAG_SLOW_WPS", "2.2"))
 
 # --------------------------------------------------------------------- voices
 # Each voice is a reference clip + its transcript (transcript materially improves
@@ -152,6 +167,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Bag")
 
 
+@app.exception_handler(Exception)
+async def _errors(request, exc):
+    """Never leak a bare 500: the UI gets a readable reason (LLM down, STT
+    unreachable, TTS timeout...) instead of a blank error."""
+    return JSONResponse({"error": f"{type(exc).__name__}: {exc}"}, status_code=502)
+
+
 # ------------------------------------------------------------- delivery modes
 # Bag's registers, straight off the item card. Each is a stack of documented
 # control tokens that LEAD the turn (emotion / style / pitch / speed / expressive
@@ -238,7 +260,15 @@ def _synth(text: str, seed: int, ref: str, ref_text: str) -> tuple[bytes, int]:
     return bytes(pcm), sr
 
 
+_TTS_LOCK = threading.Lock()   # one GPU: one generation (gate loop included) at a time
+
+
 def voice_gen(text: str, voice: dict) -> tuple[bytes, int, dict]:
+    with _TTS_LOCK:
+        return _voice_gen_unlocked(text, voice)
+
+
+def _voice_gen_unlocked(text: str, voice: dict) -> tuple[bytes, int, dict]:
     """Generate until the pitch lands in this voice's band — the same gate that
     keeps Bag from drifting female also keeps a female voice from drifting deep."""
     lo, hi = voice["band"]
@@ -260,25 +290,93 @@ def voice_gen(text: str, voice: dict) -> tuple[bytes, int, dict]:
 
 
 # --------------------------------------------------------------- post-process
-def _process(pcm: bytes, sr: int, speed: float, space: str) -> bytes:
-    """atempo for pitch-preserving speed, aecho for room space. One ffmpeg pass
-    from raw PCM in to WAV out."""
-    speed = max(0.5, min(2.0, speed))
-    filters = [f"atempo={speed:.3f}"]
-    # short sub-25ms taps with low decay fuse into ambience (Haas) instead of a
-    # distinct slapback echo. Keep it subtle.
-    if space == "room":
-        filters.append("aecho=0.9:0.85:11|18:0.10|0.05")
-    elif space == "hall":
-        filters.append("aecho=0.88:0.82:38|60:0.22|0.12")
-    elif space == "bag":                              # muffled + tiny box: inside a bag
-        filters.append("lowpass=f=4600,aecho=0.9:0.8:9:0.07")
-    af = ",".join(filters)
+def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
+    """Peak-normalize to ~-1 dBFS. TTS output is already level, so a dynamic
+    loudness normalizer (loudnorm) only pumps and squashes it — peak is the
+    right tool for speech that will be played through one speaker."""
+    n = len(pcm) // 2
+    if n == 0:
+        return pcm
+    if audioop is not None:
+        peak = audioop.max(pcm, 2) or 1
+        gain = min((32767 * target) / peak, 8.0)
+        return audioop.mul(pcm, 2, gain) if abs(gain - 1.0) > 0.02 else pcm
+    s = struct.unpack("<%dh" % n, pcm)
+    peak = max(1, max(abs(x) for x in s))
+    gain = min((32767 * target) / peak, 8.0)
+    if abs(gain - 1.0) <= 0.02:
+        return pcm
+    return struct.pack("<%dh" % n, *(max(-32768, min(32767, int(x * gain))) for x in s))
+
+
+def _trim(pcm: bytes, sr: int) -> bytes:
+    """Trim leading/trailing silence and clamp any runaway internal pause
+    (>1.2 s -> 0.7 s). Our 250 ms breaks sit well under that threshold."""
+    af = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,"
+          "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12,"
+          "areverse,silenceremove=stop_periods=-1:stop_duration=1.2:stop_threshold=-45dB:stop_silence=0.7")
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
-           "-af", af, "-f", "wav", "pipe:1"]
-    p = subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
-                       stderr=subprocess.DEVNULL)
-    return p.stdout
+           "-af", af, "-f", "s16le", "pipe:1"]
+    return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL).stdout or pcm
+
+
+# Real reverbs (Freeverb-class algorithm via pedalboard), not an echo filter.
+# Tuned for a voice sitting in a space: low wet levels, plenty of damping.
+SPACES = {
+    "dry":  [],
+    "room": [Reverb(room_size=0.22, damping=0.65, wet_level=0.09, dry_level=0.93, width=0.5)],
+    "hall": [Reverb(room_size=0.60, damping=0.45, wet_level=0.20, dry_level=0.86, width=0.9)],
+    "bag":  [LowpassFilter(cutoff_frequency_hz=4200),                 # muffled, tiny box
+             Reverb(room_size=0.08, damping=0.85, wet_level=0.07, dry_level=0.95, width=0.3)],
+}
+SPEECH_LUFS = -16.0        # streaming/speech loudness target (EBU R128-style)
+
+
+def _stretch_np(x: np.ndarray, sr: int, speed: float) -> np.ndarray:
+    """Rubber Band time-stretch (pedalboard.time_stretch), pitch-preserving and
+    far cleaner than atempo. The library's factor convention is verified at
+    runtime: whichever direction shortens the audio is 'faster'."""
+    if abs(speed - 1.0) < 0.01:
+        return x
+    y = time_stretch(x[None, :], sr, stretch_factor=speed)[0]
+    if (speed > 1.0) == (len(y) > len(x)):       # convention was inverted
+        y = time_stretch(x[None, :], sr, stretch_factor=1.0 / speed)[0]
+    return y
+
+
+def _process(pcm: bytes, sr: int, speed: float, space: str) -> bytes:
+    """The finishing chain, on the tools real voice products use:
+      1. Rubber Band time-stretch for speed (only when != 1.0)
+      2. highpass 80 Hz (rumble) -> gentle compressor (evens out the line)
+         -> the room's reverb -> limiter
+      3. loudness-normalize to -16 LUFS (pyloudnorm, ITU-R BS.1770) then a
+         true-peak limiter at -1 dBFS, so every voice/mode lands at one level."""
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    if x.size == 0:
+        return _wav(pcm, sr)
+    x = _stretch_np(x, sr, max(0.5, min(2.0, speed)))
+
+    board = Pedalboard([HighpassFilter(cutoff_frequency_hz=80),
+                        Compressor(threshold_db=-18, ratio=2.5, attack_ms=5, release_ms=90),
+                        *SPACES.get(space, SPACES["room"]),
+                        Limiter(threshold_db=-1.0)])
+    y = board(x[None, :], sr)[0]
+
+    if len(y) >= int(0.5 * sr):                  # the meter needs ~0.4 s of audio
+        lufs = pyln.Meter(sr).integrated_loudness(y.astype(np.float64))
+        if np.isfinite(lufs):
+            y = pyln.normalize.loudness(y, lufs, SPEECH_LUFS).astype(np.float32)
+    # Deterministic true-peak ceiling at -1 dBFS. pedalboard's Limiter is not a
+    # brickwall (transients overshoot, then np.clip distorts), so if the loudness
+    # gain pushed peaks past the ceiling, scale down: loudness target only within
+    # the peak ceiling — the broadcast convention.
+    peak = float(np.max(np.abs(y))) if y.size else 0.0
+    ceiling = 10 ** (-1.0 / 20)
+    if peak > ceiling:
+        y = y * (ceiling / peak)
+    out = (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    return _wav(out, sr)
 
 
 def _wav(pcm: bytes, sr: int) -> bytes:
@@ -292,6 +390,33 @@ def _wav(pcm: bytes, sr: int) -> bytes:
 
 
 # ------------------------------------------------------------------- pipeline
+_SENT = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _chunks(text: str, max_len: int = 220, min_len: int = 40) -> list[str]:
+    """Split long text at sentence ends into generation-sized chunks. Short text
+    is one chunk. Tiny trailing fragments are merged into their neighbour."""
+    text = text.strip()
+    if len(text) <= max_len:
+        return [text]
+    parts, cur = [], ""
+    for s in _SENT.split(text):
+        if cur and len(cur) + 1 + len(s) > max_len:
+            parts.append(cur)
+            cur = s
+        else:
+            cur = (cur + " " + s).strip()
+    if cur:
+        parts.append(cur)
+    merged: list[str] = []
+    for p in parts:
+        if merged and len(p) < min_len:
+            merged[-1] += " " + p
+        else:
+            merged.append(p)
+    return merged
+
+
 def _render(text: str, voice_key: str, mode_key: str,
             speed=None, space=None, emotion="") -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
@@ -299,25 +424,39 @@ def _render(text: str, voice_key: str, mode_key: str,
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
     m = MODES.get(mode_key, MODES[DEFAULT_MODE])
     spc = space if space is not None else m["space"]
-
-    # markup out first: ** stretches, TAB/—/… breaks. The model speaks a clean line;
-    # breaks become short deterministic silences (not the model's long pause token).
-    clean, aligner_words, marks, breaks = elongation.parse_marks(text)
     lead = v["pitch"] + m["lead"]            # voice sets timbre, mode sets delivery
     if emotion:
         lead = f"<|emotion:{emotion}|>" + lead
 
-    pcm, sr, meta = voice_gen(lead + clean, v)
-    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
+    # Long text renders sentence-by-sentence: each generation stays short and
+    # stable and the model's runaway on long inputs is bounded. Markup (** and
+    # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
+    # model speaks a clean line and breaks become short deterministic silences.
+    parts, drawls, meta, sr, total_words = [], [], {}, 24000, 0
+    for chunk in _chunks(text):
+        clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
+        if not clean:
+            continue
+        pcm, sr, cmeta = voice_gen(lead + clean, v)
+        pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
+        drawls += applied
+        total_words += len(clean.split())
+        meta = meta or cmeta
+        parts.append(pcm)
+    if not parts:
+        raise ValueError("nothing to say")
+    meta["chunks"] = len(parts)
+    pcm = (b"\x00\x00" * int(0.25 * sr)).join(parts)   # one break's worth between chunks
 
-    # adaptive speed: nudge the delivery toward a natural dialogue pace based on
-    # how fast the model actually spoke this line (words/sec), instead of a fixed
-    # multiplier. Explicit speed from the UI overrides.
+    # adaptive speed: nudge the delivery toward a natural dialogue pace from how
+    # fast the model actually spoke (words/sec) — not a fixed multiplier.
+    # An explicit speed from the UI overrides.
+    pcm = _trim(pcm, sr)                    # silence trim + runaway-pause clamp first
     if speed is None:
-        words = max(1, len(clean.split()))
+        # auto = the mode's native pace; a gentle nudge only when clearly slow
         dur = max(0.2, len(pcm) / (2 * sr))
-        wps = words / dur
-        sp = max(0.9, min(1.35, ADAPTIVE_TARGET_WPS / wps))
+        wps = max(1, total_words) / dur
+        sp = 1.0 if wps >= ADAPTIVE_SLOW_WPS else min(1.12, ADAPTIVE_TARGET_WPS / wps)
         meta["adaptive_speed"] = round(sp, 2)
     else:
         sp = speed
@@ -328,6 +467,7 @@ def _audio_response(wav, meta, drawls, extra=None) -> Response:
     headers = {"X-Bag-Hz": str(meta.get("hz")),
                "X-Bag-Tries": ",".join(map(str, meta.get("tries", []))),
                "X-Bag-Speed": str(meta.get("adaptive_speed", "")),
+               "X-Bag-Chunks": str(meta.get("chunks", 1)),
                "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
     if extra:
         headers.update(extra)
@@ -342,12 +482,20 @@ def _llm_reply(user_text: str, persona: str, history=None,
         if h.get("role") in ("user", "assistant") and h.get("content"):
             msgs.append({"role": h["role"], "content": h["content"]})
     msgs.append({"role": "user", "content": user_text})
-    r = requests.post(LLM_URL + "/api/chat", timeout=120, json={
-        "model": LLM_MODEL, "messages": msgs, "stream": False, "keep_alive": "30m",
-        "options": {"temperature": temperature, "num_predict": num_predict}})
-    r.raise_for_status()
-    txt = (r.json().get("message", {}) or {}).get("content", "").strip()
-    return txt.strip('"').strip()
+    txt = ""
+    for attempt in range(2):                     # the model occasionally returns ""
+        r = requests.post(LLM_URL + "/api/chat", timeout=120, json={
+            "model": LLM_MODEL, "messages": msgs, "stream": False, "keep_alive": "30m",
+            "think": False,             # Qwen3: no reasoning trace, just the line
+            "options": {"temperature": temperature if attempt == 0 else 0.7,
+                        "num_predict": num_predict,
+                        "num_ctx": 4096}})   # short lines; a 40k ctx wastes ~8GB VRAM
+        r.raise_for_status()
+        txt = (r.json().get("message", {}) or {}).get("content", "").strip()
+        txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.S).strip('"').strip()
+        if txt:
+            break
+    return txt
 
 
 def _stt(audio: bytes, filename: str, lang: str = "sk") -> str:
@@ -448,7 +596,7 @@ def _improv_line(voice_key: str, kind: str, lang: str) -> str:
                   f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
                   f"Vlož jednu až dve prirodzené krátke pauzy ako pomlčku (—) tam, "
                   f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.")
-    text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.95, num_predict=90)
+    text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.8, num_predict=90)
     return text.strip().strip('"').split("\n")[0].strip()
 
 
