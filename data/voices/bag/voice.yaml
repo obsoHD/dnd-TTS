@@ -84,18 +84,18 @@ f0_band:
 - 60
 - 155
 armed_spices:
-  vzdych:
-    sim_drop: -0.0042
-    min_sim: 0.9071
-    n: 20
-    armed_at: '2026-09-03T23:15:34+00:00'
-  pobavený:
-    sim_drop: -0.0012
-    min_sim: 0.9071
-    n: 20
-    armed_at: '2026-09-03T23:15:34+00:00'
   smiech:
-    sim_drop: 0.0003
-    min_sim: 0.9071
+    sim_drop: -0.0003
+    min_sim: 0.9051
     n: 20
-    armed_at: '2026-09-03T23:15:34+00:00'
+    armed_at: '2026-09-03T23:39:50+00:00'
+  pobavený:
+    sim_drop: 0.0006
+    min_sim: 0.9042
+    n: 20
+    armed_at: '2026-09-03T23:39:50+00:00'
+  vzdych:
+    sim_drop: 0.0051
+    min_sim: 0.9235
+    n: 20
+    armed_at: '2026-09-03T23:39:50+00:00'

@@ -1,0 +1,84 @@
+id: shopkeep
+label: Crazy Shopkeep (male)
+lang: sk
+version: 1
+ref_file: ref.wav
+ref_sha256: 07b75e2d6a1beb52a0a67d0574c9c260ab38fd4ca375b68bca8c7ea4f1857c5a
+ref_transcript: Why are you guys so anti-dictators? Imagine if America was a dictatorship.
+  You could let one percent of the people have all the nation's wealth. You could
+  help your rich friends get richer by cutting their taxes and bailing them out when
+  they gamble and lose. You could ignore the needs of the poor for health care and
+  education.
+ref_tts_path: /refs/shopkeep/ref.wav
+sampler:
+  temperature: 0.75
+  top_k: 40
+  top_p: 0.95
+golden_seed: 0
+gate:
+  mode: strict
+  baseline: 0.9249
+  p10: 0.8734
+  strict: 0.8849
+  loose: 0.8449
+  cer_max: 0.15
+  calibrated_at: '2026-09-03T22:37:32+00:00'
+master:
+  energy: 65
+  hpf_hz: 50
+  presence_hz: 3000
+  presence_q: 1.0
+  air_hz: 10000
+  comp_ratio: 3.0
+  comp_attack_ms: 5
+  comp_release_ms: 100
+  comp_threshold_db: -24.0
+  tempo: 1.0
+  tempo_cap: 1.1
+  pitch_st: 0.0
+  gain_db: -1.61
+  room_size: 0.22
+  room_damping: 0.65
+  room_wet: 0.08
+  limiter_dbtp: -1.0
+  fade_in_ms: 8
+  fade_out_ms: 60
+  lead_ms: 40
+  tail_ms: 250
+  target_lufs: -18.0
+  trim_max_db: 2.0
+banned_tokens: []
+persona:
+  sk: 'Si ŠIALENÝ, prehnane nadšený kupec v hre Dungeons & Dragons. Hovoríš po slovensky,
+    hlasno, teatrálne a manicky. Všetko sa snažíš predať, vychvaľuješ svoj tovar do
+    nebies a smeješ sa vlastným vtipom. Odpovedaj KRÁTKO — jedna až tri vety hovorenej
+    reči, bez odrážok ani javiskových poznámok. Píš výhradne spisovnou slovenčinou:
+    dodržiavaj pády a zhodu prídavného mena s podstatným menom, žiadne bohemizmy (vždyť,
+    doporučiť, tady, jelikož, prostě), žiadne anglické kalky. Príklady správnych replík:
+    „Jasné, ja to vyriešim. Ako vždy.“ „Toto? To ti nedám, kamoš. Ani náhodou.“ „Máš
+    tridsať životov. Prestaň fňukať a bojuj.“ „Kto zachránil deň? No predsa ja.“ „Tak
+    poď, nemám na to celý deň.“'
+  en: You are a CRAZY, wildly enthusiastic merchant in a Dungeons & Dragons game.
+    You speak English — loud, theatrical and manic. You try to sell everything, praise
+    your wares to the skies and laugh at your own jokes. Answer SHORT — one to three
+    sentences of spoken dialogue, no bullet points or stage directions.
+fillers: []
+f0_band:
+- 85
+- 175
+armed_spices:
+  výrazne:
+    sim_drop: -0.0071
+    min_sim: 0.8985
+    n: 18
+    armed_at: '2026-09-03T23:44:12+00:00'
+  nadšený:
+    sim_drop: -0.0006
+    min_sim: 0.8952
+    n: 18
+    armed_at: '2026-09-03T23:44:12+00:00'
+  smiech:
+    sim_drop: 0.0061
+    min_sim: 0.8949
+    n: 18
+    armed_at: '2026-09-03T23:44:12+00:00'
