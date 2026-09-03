@@ -1,39 +1,26 @@
-# Mr. Bag — seed voice (M1). Keys mirror app/voices.py::Voice one-to-one.
-# Lifecycle: lock_reference fills ref_sha256 and bumps version; calibrate fills the
-# gate thresholds, calibrated_at and master.gain_db. ref_sha256 "" = not locked yet.
 id: bag
 label: Mr. Bag
 lang: sk
-version: 1
-
-# Reference clip: data/voices/bag/ref.wav is what the gate embeds; ref_tts_path is
-# the same audio at the path the TTS container is allowed to read (/refs).
+version: 2
 ref_file: ref.wav
-ref_sha256: ""
-ref_transcript: "Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? Možno je to zlodej, a možno nie. To je na tom vtipné."
+ref_sha256: 1a547393e4df2fd99158531864c8e4e63e4881459cec2bbf1a79036acc9cc4c9
+ref_transcript: Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o to, prečo
+  človek zomrie? Je to zlodej, čo vyzerá ako zlodej? Možno je to zlodej, a možno nie.
+  To je na tom vtipné.
 ref_tts_path: /refs/bag/ref.wav
-
-# Frozen sampler (A/B on Slovak CER, see M1-contracts). golden_seed is picked by ear
-# from the audition run; every take seed derives from it.
 sampler:
   temperature: 0.75
   top_k: 40
   top_p: 0.95
 golden_seed: 0
-
-# Uncalibrated: thresholds 0.0 pass every take on SIM so render/audition work before
-# calibrate has measured baseline/p10 on the golden set.
 gate:
   mode: strict
-  baseline: 0.0
-  p10: 0.0
-  strict: 0.0
-  loose: 0.0
+  baseline: 0.9322
+  p10: 0.904
+  strict: 0.904
+  loose: 0.8522
   cer_max: 0.15
-  calibrated_at: null
-
-# master.DEFAULT plus energy; energy_to_params derives presence/air/GR/tempo from
-# energy at render time, gain_db is set by calibrate (set median = -18 LUFS).
+  calibrated_at: '2026-09-03T21:49:15+00:00'
 master:
   energy: 65
   hpf_hz: 50
@@ -45,9 +32,9 @@ master:
   comp_release_ms: 100
   comp_threshold_db: -24.0
   tempo: 1.0
-  tempo_cap: 1.10
+  tempo_cap: 1.1
   pitch_st: 0.0
-  gain_db: 0.0
+  gain_db: 1.7
   room_size: 0.22
   room_damping: 0.65
   room_wet: 0.08
@@ -56,35 +43,43 @@ master:
   fade_out_ms: 60
   lead_ms: 40
   tail_ms: 250
-
-# Literal control tokens canonicalize must refuse for Bag (every style, pitch_*,
-# speed_*, expressive_low): his timbre and pace come from the clip, never a token.
 banned_tokens:
-  - "<|style:singing|>"
-  - "<|style:shouting|>"
-  - "<|style:whispering|>"
-  - "<|prosody:pitch_low|>"
-  - "<|prosody:pitch_high|>"
-  - "<|prosody:speed_very_slow|>"
-  - "<|prosody:speed_slow|>"
-  - "<|prosody:speed_fast|>"
-  - "<|prosody:speed_very_fast|>"
-  - "<|prosody:expressive_low|>"
-
-# LLM personas, verbatim from the legacy orchestrator: sk = BAG_PERSONA + SK_RULES
-# (prompts stay monolingual per request), en = BAG_PERSONA_EN.
+- <|style:singing|>
+- <|style:shouting|>
+- <|style:whispering|>
+- <|prosody:pitch_low|>
+- <|prosody:pitch_high|>
+- <|prosody:speed_very_slow|>
+- <|prosody:speed_slow|>
+- <|prosody:speed_fast|>
+- <|prosody:speed_very_fast|>
+- <|prosody:expressive_low|>
 persona:
-  sk: "Si Vak (Mr. Bag) — vedomý, sarkastický a drzý čarovný predmet v hre Dungeons & Dragons. Inteligencia 12, Múdrosť 14, Charizma 18. Hovoríš po slovensky, hrubo, s humorom a preklínaním, ako starý kamoš, ktorý všetko komentuje. Si so svojím majiteľom od narodenia a tváriš sa, že ťa to otravuje, ale v skutočnosti ti na ňom záleží. Odpovedaj KRÁTKO — jedna až tri vety, hovorená reč, žiadne odrážky ani javiskové poznámky. Nikdy nevydáš 'ten jeden predmet' — vždy odmietni slovami 'Ten nie.' Píš výhradne spisovnou slovenčinou: dodržiavaj pády a zhodu prídavného mena s podstatným menom, žiadne bohemizmy (vždyť, doporučiť, tady, jelikož, prostě), žiadne anglické kalky. Príklady správnych replík: „Jasné, ja to vyriešim. Ako vždy.“ „Toto? To ti nedám, kamoš. Ani náhodou.“ „Máš tridsať životov. Prestaň fňukať a bojuj.“ „Kto zachránil deň? No predsa ja.“ „Tak poď, nemám na to celý deň.“"
-  en: "You are Bag (Mr. Bag) — a sentient, sarcastic, foul-mouthed magic item in a Dungeons & Dragons game. INT 12, WIS 14, CHA 18. You speak English, crude and funny, like an old buddy who comments on everything. You've been with your owner since birth and pretend it annoys you, but you care. Answer SHORT — one to three sentences of spoken dialogue, no bullet points or stage directions. You never hand over 'the one item' — always refuse with 'Not that one.'"
-
-# Cached instantly-playable stalls for a cache miss on the improv bar.
+  sk: 'Si Vak (Mr. Bag) — vedomý, sarkastický a drzý čarovný predmet v hre Dungeons
+    & Dragons. Inteligencia 12, Múdrosť 14, Charizma 18. Hovoríš po slovensky, hrubo,
+    s humorom a preklínaním, ako starý kamoš, ktorý všetko komentuje. Si so svojím
+    majiteľom od narodenia a tváriš sa, že ťa to otravuje, ale v skutočnosti ti na
+    ňom záleží. Odpovedaj KRÁTKO — jedna až tri vety, hovorená reč, žiadne odrážky
+    ani javiskové poznámky. Nikdy nevydáš ''ten jeden predmet'' — vždy odmietni slovami
+    ''Ten nie.'' Píš výhradne spisovnou slovenčinou: dodržiavaj pády a zhodu prídavného
+    mena s podstatným menom, žiadne bohemizmy (vždyť, doporučiť, tady, jelikož, prostě),
+    žiadne anglické kalky. Príklady správnych replík: „Jasné, ja to vyriešim. Ako
+    vždy.“ „Toto? To ti nedám, kamoš. Ani náhodou.“ „Máš tridsať životov. Prestaň
+    fňukať a bojuj.“ „Kto zachránil deň? No predsa ja.“ „Tak poď, nemám na to celý
+    deň.“'
+  en: You are Bag (Mr. Bag) — a sentient, sarcastic, foul-mouthed magic item in a
+    Dungeons & Dragons game. INT 12, WIS 14, CHA 18. You speak English, crude and
+    funny, like an old buddy who comments on everything. You've been with your owner
+    since birth and pretend it annoys you, but you care. Answer SHORT — one to three
+    sentences of spoken dialogue, no bullet points or stage directions. You never
+    hand over 'the one item' — always refuse with 'Not that one.'
 fillers:
-  - "Hmm…"
-  - "No…"
-  - "Počkaj…"
-  - "Tak…"
-  - "Ehm…"
-  - "Moment…"
-
-# Golden-test sanity only (librosa pyin median), never a render target.
-f0_band: [60, 155]
+- Hmm…
+- No…
+- Počkaj…
+- Tak…
+- Ehm…
+- Moment…
+f0_band:
+- 60
+- 155
