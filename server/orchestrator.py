@@ -27,21 +27,73 @@ import subprocess
 import urllib.request
 import wave
 from io import BytesIO
+from urllib.parse import quote
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+import requests
+import urllib3
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from server import elongation
 
+urllib3.disable_warnings()      # STT is https with a self-signed cert on the LAN
+
 TTS_URL = os.environ.get("BAG_TTS_URL", "http://127.0.0.1:8010")
-REF = os.environ.get("BAG_REF", "/refs/bag_ref.wav")
-REF_TEXT = os.environ.get("BAG_REF_TEXT",
-    "Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o to, prečo človek "
-    "zomrie? Je to zlodej, čo vyzerá ako zlodej? Možno je to zlodej, a možno nie. "
-    "To je na tom vtipné.")
-MALE_MAX_HZ = float(os.environ.get("BAG_MALE_MAX_HZ", "155"))
+LLM_URL = os.environ.get("BAG_LLM_URL", "http://127.0.0.1:11434")
+# 8B on CPU — GPU0/1 are saturated (lifeos 70B + TTS). Warm ~3-4s per reply.
+# Point BAG_LLM_MODEL at a 30B on a freed GPU for snappy replies (see notes).
+LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "llama3.1:8b-instruct-q8_0")
+STT_URL = os.environ.get("BAG_STT_URL", "https://127.0.0.1:8443/stt")
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
+
+# --------------------------------------------------------------------- voices
+# Each voice is a reference clip + its transcript (transcript materially improves
+# cloning), a `pitch` token that shapes timbre, an accept `band` (Hz) for the
+# gate so we keep re-rolling until the generation lands in that voice's range,
+# and a `persona` that drives the LLM. Add NPCs by dropping a clip in /refs.
+BAG_PERSONA = (
+    "Si Vak (Mr. Bag) — vedomý, sarkastický a drzý čarovný predmet v hre "
+    "Dungeons & Dragons. Inteligencia 12, Múdrosť 14, Charizma 18. Hovoríš po "
+    "slovensky, hrubo, s humorom a preklínaním, ako starý kamoš, ktorý všetko "
+    "komentuje. Si so svojím majiteľom od narodenia a tváriš sa, že ťa to otravuje, "
+    "ale v skutočnosti ti na ňom záleží. Odpovedaj KRÁTKO — jedna až tri vety, "
+    "hovorená reč, žiadne odrážky ani javiskové poznámky. Nikdy nevydáš 'ten jeden "
+    "predmet' — vždy odmietni slovami 'Ten nie.'")
+NPC_PERSONA = (
+    "Si postava (NPC) v hre Dungeons & Dragons. Hovoríš po slovensky, stručne a "
+    "v úlohe. Odpovedaj KRÁTKO — jedna až tri vety hovorenej reči, bez odrážok.")
+SHOPKEEP_PERSONA = (
+    "Si ŠIALENÝ, prehnane nadšený kupec v hre Dungeons & Dragons. Hovoríš po "
+    "slovensky, hlasno, teatrálne a manicky. Všetko sa snažíš predať, vychvaľuješ "
+    "svoj tovar do nebies a smeješ sa vlastným vtipom. Odpovedaj KRÁTKO — jedna až "
+    "tri vety hovorenej reči, bez odrážok ani javiskových poznámok.")
+
+VOICES = {
+    "bag":    {"ref": "/refs/bag_ref.wav", "label": "Mr. Bag (deep male)",
+               "pitch": "<|prosody:pitch_low|>", "band": (60, 155),
+               "persona": BAG_PERSONA,
+               "text": ("Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o "
+                        "to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? "
+                        "Možno je to zlodej, a možno nie. To je na tom vtipné.")},
+    "male":   {"ref": "/refs/male-voice.wav", "label": "Adam (male)",
+               "pitch": "", "band": (75, 185), "persona": NPC_PERSONA,
+               "text": ("Hey, Adam here. Let's create something that feels real, "
+                        "sounds human, and connects every time.")},
+    "female": {"ref": "/refs/female-voice.wav", "label": "Clara (female)",
+               "pitch": "", "band": (150, 290), "persona": NPC_PERSONA,
+               "text": ("By repeating what students say, teachers can demonstrate "
+                        "that they are listening. By extending what students say.")},
+    "shopkeep": {"ref": "/refs/shopkeep_ref.wav", "label": "Crazy Shopkeep (male)",
+                 "pitch": "", "band": (105, 255), "persona": SHOPKEEP_PERSONA,
+                 "text": ("Why are you guys so anti-dictators? Imagine if America was "
+                          "a dictatorship. You could let one percent of the people "
+                          "have all the nation's wealth. You could help your rich "
+                          "friends get richer by cutting their taxes and bailing them "
+                          "out when they gamble and lose. You could ignore the needs "
+                          "of the poor for health care and education.")},
+}
+DEFAULT_VOICE = "bag"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Bag")
@@ -58,31 +110,31 @@ app = FastAPI(title="Bag")
 #   beats = inject pause tokens at em-dashes / ellipses for comedic timing
 MODES = {
     # talking to his bonded guy — hyped, high-spirited, fast. The default.
-    "bro":     {"lead": "<|emotion:enthusiasm|><|prosody:expressive_high|><|prosody:speed_fast|><|prosody:pitch_low|>",
+    "bro":     {"lead": "<|emotion:enthusiasm|><|prosody:expressive_high|><|prosody:speed_fast|>",
                 "speed": 1.12, "space": "room", "beats": True,
                 "desc": "hyped, high-spirited, talking to his guy"},
     # dry mockery, deadpan. Deliberately flat delivery, but loaded.
-    "deadpan": {"lead": "<|emotion:bitterness|><|prosody:expressive_low|><|prosody:pitch_low|>",
+    "deadpan": {"lead": "<|emotion:bitterness|><|prosody:expressive_low|>",
                 "speed": 1.05, "space": "room", "beats": True,
                 "desc": "dry, deadpan mockery"},
     # gloating after saving the day — 'who saves the fucking day?'
-    "smug":    {"lead": "<|emotion:pride|><|prosody:expressive_high|><|prosody:pitch_low|>",
+    "smug":    {"lead": "<|emotion:pride|><|prosody:expressive_high|>",
                 "speed": 1.10, "space": "room", "beats": True,
                 "desc": "smug, gloating, victorious"},
     # protective fury — 'those aren't your fucking things'
-    "pissed":  {"lead": "<|emotion:anger|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_fast|>",
+    "pissed":  {"lead": "<|emotion:anger|><|prosody:expressive_high|><|prosody:speed_fast|>",
                 "speed": 1.05, "space": "room", "beats": False,
                 "desc": "protective, furious, loud"},
     # the One Thing — quiet, ominous, slow. 'Not that one.'
-    "menace":  {"lead": "<|style:whispering|><|emotion:contemplation|><|prosody:pitch_low|><|prosody:speed_slow|>",
+    "menace":  {"lead": "<|style:whispering|><|emotion:contemplation|><|prosody:speed_slow|>",
                 "speed": 1.00, "space": "hall", "beats": True,
                 "desc": "quiet, ominous, dangerous"},
     # combat urgency / panic — fast, alarmed
-    "panic":   {"lead": "<|emotion:fear|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_fast|>",
+    "panic":   {"lead": "<|emotion:fear|><|prosody:expressive_high|><|prosody:speed_fast|>",
                 "speed": 1.10, "space": "room", "beats": False,
                 "desc": "urgent, alarmed, combat"},
     # rare reluctant softness under the insults — 'you owe me a fucking potion'
-    "soft":    {"lead": "<|emotion:affection|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_slow|>",
+    "soft":    {"lead": "<|emotion:affection|><|prosody:expressive_high|><|prosody:speed_slow|>",
                 "speed": 1.00, "space": "room", "beats": True,
                 "desc": "reluctant, quietly sincere"},
 }
@@ -117,11 +169,11 @@ def _f0(pcm: bytes, sr: int) -> float:
     return sr / best[1] if best[1] else 0.0
 
 
-def _synth(text: str, seed: int) -> tuple[bytes, int]:
+def _synth(text: str, seed: int, ref: str, ref_text: str) -> tuple[bytes, int]:
     body = {"model": "/model", "stream": True, "response_format": "pcm",
             "temperature": 0.8, "top_k": 50, "max_new_tokens": 700, "seed": seed,
             "voice": "default", "input": text,
-            "references": [{"audio_path": REF, "text": REF_TEXT}]}
+            "references": [{"audio_path": ref, "text": ref_text}]}
     req = urllib.request.Request(TTS_URL + "/v1/audio/speech",
                                  data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
@@ -133,22 +185,25 @@ def _synth(text: str, seed: int) -> tuple[bytes, int]:
     return bytes(pcm), sr
 
 
-def bag_voice(text: str) -> tuple[bytes, int, dict]:
-    """Generate until the pitch says it's Bag, not the female default."""
+def voice_gen(text: str, voice: dict) -> tuple[bytes, int, dict]:
+    """Generate until the pitch lands in this voice's band — the same gate that
+    keeps Bag from drifting female also keeps a female voice from drifting deep."""
+    lo, hi = voice["band"]
+    mid = (lo + hi) / 2
     attempts = []
-    best = None                                       # fallback: deepest we saw
+    best = None                                       # fallback: closest to band
     for seed in range(MAX_TRIES):
-        pcm, sr = _synth(text, seed)
+        pcm, sr = _synth(text, seed, voice["ref"], voice["text"])
         hz = _f0(pcm, sr)
         attempts.append(round(hz))
-        if best is None or hz < best[2]:
-            best = (pcm, sr, hz)
-        if 60 < hz < MALE_MAX_HZ:
+        dist = abs(hz - mid)
+        if best is None or dist < best[3]:
+            best = (pcm, sr, hz, dist)
+        if lo < hz < hi:
             return pcm, sr, {"accepted_seed": seed, "hz": round(hz),
                              "tries": attempts}
-    # nothing cleared the gate — hand back the deepest attempt rather than fail
     return best[0], best[1], {"accepted_seed": None, "hz": round(best[2]),
-                              "tries": attempts, "note": "gate not met; deepest kept"}
+                              "tries": attempts, "note": "gate not met; closest kept"}
 
 
 # --------------------------------------------------------------- post-process
@@ -181,13 +236,77 @@ def _wav(pcm: bytes, sr: int) -> bytes:
     return buf.getvalue()
 
 
+# ------------------------------------------------------------------- pipeline
+def _render(text: str, voice_key: str, mode_key: str,
+            speed=None, space=None, emotion="") -> tuple[bytes, dict, list]:
+    """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
+    with exact-vowel drawls and speed/space shaping. The whole TTS path."""
+    v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
+    m = MODES.get(mode_key, MODES[DEFAULT_MODE])
+    sp = speed if speed is not None else m["speed"]
+    spc = space if space is not None else m["space"]
+
+    clean, aligner_words, marks = elongation.parse_marks(text)
+    lead = v["pitch"] + m["lead"]            # voice sets timbre, mode sets delivery
+    if emotion:
+        lead = f"<|emotion:{emotion}|>" + lead
+    body = _beats(clean) if m["beats"] else clean
+
+    pcm, sr, meta = voice_gen(lead + body, v)
+    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks)
+    return _process(pcm, sr, sp, spc), meta, drawls
+
+
+def _audio_response(wav, meta, drawls, extra=None) -> Response:
+    headers = {"X-Bag-Hz": str(meta.get("hz")),
+               "X-Bag-Tries": ",".join(map(str, meta.get("tries", []))),
+               "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
+    if extra:
+        headers.update(extra)
+    return Response(content=wav, media_type="audio/wav", headers=headers)
+
+
+def _llm_reply(user_text: str, persona: str, history=None,
+               temperature=0.85, num_predict=180) -> str:
+    """The LLM via ollama, in persona, kept short. Warm-pinned via keep_alive."""
+    msgs = [{"role": "system", "content": persona}]
+    for h in (history or [])[-8:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            msgs.append({"role": h["role"], "content": h["content"]})
+    msgs.append({"role": "user", "content": user_text})
+    r = requests.post(LLM_URL + "/api/chat", timeout=120, json={
+        "model": LLM_MODEL, "messages": msgs, "stream": False, "keep_alive": "30m",
+        "options": {"temperature": temperature, "num_predict": num_predict}})
+    r.raise_for_status()
+    txt = (r.json().get("message", {}) or {}).get("content", "").strip()
+    return txt.strip('"').strip()
+
+
+def _stt(audio: bytes, filename: str, lang: str = "sk") -> str:
+    r = requests.post(STT_URL, timeout=120, verify=False,
+                      files={"audio": (filename or "clip.webm", audio)},
+                      data={"lang": lang})
+    r.raise_for_status()
+    return (r.json() or {}).get("text", "").strip()
+
+
 # --------------------------------------------------------------------- routes
 class SayReq(BaseModel):
     text: str
-    mode: str = DEFAULT_MODE       # a delivery register from MODES
-    speed: float | None = None     # None -> use the mode's default
-    space: str | None = None       # None -> use the mode's default
-    emotion: str = ""              # optional extra emotion token, advanced
+    voice: str = DEFAULT_VOICE
+    mode: str = DEFAULT_MODE
+    speed: float | None = None
+    space: str | None = None
+    emotion: str = ""
+
+
+class RespondReq(BaseModel):
+    text: str
+    voice: str = DEFAULT_VOICE
+    mode: str = DEFAULT_MODE
+    speed: float | None = None
+    space: str | None = None
+    history: list = []
 
 
 @app.get("/modes")
@@ -196,33 +315,77 @@ def modes():
             "modes": {k: v["desc"] for k, v in MODES.items()}}
 
 
+@app.get("/voices")
+def voices():
+    return {"default": DEFAULT_VOICE,
+            "voices": {k: v["label"] for k, v in VOICES.items()}}
+
+
 @app.post("/say")
 def say(req: SayReq):
-    raw = req.text.strip()
-    if not raw:
+    if not req.text.strip():
         return Response(status_code=400, content="empty text")
-    m = MODES.get(req.mode, MODES[DEFAULT_MODE])
-    speed = req.speed if req.speed is not None else m["speed"]
-    space = req.space if req.space is not None else m["space"]
+    wav, meta, drawls = _render(req.text.strip(), req.voice, req.mode,
+                                req.speed, req.space, req.emotion)
+    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode})
 
-    # pull the ** elongation markup out first — the model speaks the clean line
-    clean, aligner_words, marks = elongation.parse_marks(raw)
 
-    lead = m["lead"]
-    if req.emotion:
-        lead = f"<|emotion:{req.emotion}|>" + lead
-    body = _beats(clean) if m["beats"] else clean
-    text = lead + body
+@app.post("/respond")
+def respond(req: RespondReq):
+    """DM/player types -> Bag (in persona) answers, spoken."""
+    heard = req.text.strip()
+    if not heard:
+        return Response(status_code=400, content="empty text")
+    v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
+    reply = _llm_reply(heard, v["persona"], req.history)
+    wav, meta, drawls = _render(reply, req.voice, req.mode, req.speed, req.space)
+    return _audio_response(wav, meta, drawls,
+                           {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
-    pcm, sr, meta = bag_voice(text)
-    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks)  # exact vowels
-    wav = _process(pcm, sr, speed, space)
-    return Response(content=wav, media_type="audio/wav",
-                    headers={"X-Bag-Mode": req.mode,
-                             "X-Bag-Seed": str(meta.get("accepted_seed")),
-                             "X-Bag-Hz": str(meta.get("hz")),
-                             "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls),
-                             "X-Bag-Tries": ",".join(map(str, meta.get("tries", [])))})
+
+class FixReq(BaseModel):
+    text: str
+
+
+@app.post("/fix")
+def fix(req: FixReq):
+    """Clean up Slovak typos/grammar without changing meaning or the ** markup."""
+    t = req.text.strip()
+    if not t:
+        return {"text": ""}
+    system = (
+        "Si automatický korektor slovenského textu pre hru. Opravuj IBA preklepy, "
+        "diakritiku a interpunkciu. NEMEŇ slová, význam ani štýl. Slang a hovorové "
+        "slová (brácho, kámo, čávo, hej) NECHAJ PRESNE TAK, neprepisuj ich na "
+        "spisovné. Vulgarizmy nechaj — sú to repliky postáv. Hviezdičky (**) sú "
+        "značky a musíš ich nechať PRESNE tam a v presnom počte ako sú. NIKDY "
+        "neodmietni ani nekomentuj — vráť LEN opravený text.\n"
+        "Príklad: vstup 'brá**cho co ti dava kamo' -> výstup 'Brá**cho, čo ti dáva, kámo?'")
+    try:
+        fixed = _llm_reply(t, system, None, temperature=0.2, num_predict=200)
+    except Exception as e:  # noqa: BLE001
+        return {"text": t, "error": str(e)}
+    # the small model sometimes prefixes chatter like "Výstup: ..." — salvage it
+    for marker in ("Výstup:", "výstup:", "Output:", "OUTPUT:"):
+        if marker in fixed:
+            fixed = fixed.split(marker)[-1]
+    fixed = fixed.strip().strip('"').strip()
+    return {"text": fixed or t}
+
+
+@app.post("/converse")
+async def converse(audio: UploadFile = File(...), voice: str = Form(DEFAULT_VOICE),
+                   mode: str = Form(DEFAULT_MODE), lang: str = Form("sk")):
+    """Push-to-talk: speak -> Whisper -> Bag answers, spoken. One round trip."""
+    heard = _stt(await audio.read(), audio.filename, lang)
+    if not heard:
+        return JSONResponse({"heard": "", "reply": "", "error": "no speech"},
+                            status_code=200)
+    v = VOICES.get(voice, VOICES[DEFAULT_VOICE])
+    reply = _llm_reply(heard, v["persona"])
+    wav, meta, drawls = _render(reply, voice, mode)
+    return _audio_response(wav, meta, drawls,
+                           {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
 
 @app.on_event("startup")
@@ -232,8 +395,8 @@ def _warm():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "tts": TTS_URL, "ref": REF,
-            "elongation": elongation.load(),
+    return {"ok": True, "tts": TTS_URL, "llm": LLM_MODEL, "stt": STT_URL,
+            "voices": list(VOICES), "elongation": elongation.load(),
             "elongation_error": elongation._load_error}
 
 

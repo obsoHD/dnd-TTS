@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bag</title>
+<title>Voice Forge</title>
 <style>
   :root{
     --bg:#1a1613; --panel:#26201b; --edge:#3a3029; --ink:#efe6d8;
@@ -12,28 +12,44 @@
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);
        color:var(--ink);font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;
-       display:flex;align-items:flex-start;justify-content:center;padding:32px 16px}
-  .wrap{width:100%;max-width:700px}
-  h1{font-size:30px;margin:0 0 2px;letter-spacing:.5px}
+       display:flex;justify-content:center;padding:28px 16px}
+  .wrap{width:100%;max-width:900px}
+  h1{font-size:28px;margin:0 0 2px;letter-spacing:.5px}
   h1 .em{color:var(--accent)}
-  .sub{color:var(--muted);margin:0 0 22px;font-style:italic;font-size:15px}
-  .card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;
+  .sub{color:var(--muted);margin:0 0 20px;font-style:italic;font-size:15px}
+  .layout{display:flex;gap:18px;align-items:flex-start}
+  /* sidebar of voices */
+  .side{width:210px;flex:none;background:var(--panel);border:1px solid var(--edge);
+        border-radius:14px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  .side h2{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);
+           margin:4px 6px 10px}
+  .voice{display:block;width:100%;text-align:left;background:#2c2620;border:1px solid var(--edge);
+         color:var(--ink);border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;
+         font:inherit;transition:.12s}
+  .voice:hover{border-color:var(--accent2)}
+  .voice.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
+            border-color:var(--accent);font-weight:600}
+  .voice small{display:block;font-size:11.5px;color:var(--muted);font-weight:400;margin-top:2px}
+  .voice.on small{color:#3a2a12}
+  /* main */
+  .card{flex:1;min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:14px;
         padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;
+        color:var(--muted);margin:16px 0 8px}
+  label:first-child{margin-top:0}
+  .pills{display:flex;gap:8px;flex-wrap:wrap}
+  .pill{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;
+        padding:7px 12px;font-size:13.5px;cursor:pointer;transition:.12s}
+  .pill:hover{border-color:var(--accent2)}
+  .pill.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
+           border-color:var(--accent);font-weight:600}
+  .modedesc{font-size:12.5px;color:var(--muted);font-style:italic;min-height:16px;margin:8px 2px 0}
   textarea{width:100%;min-height:96px;resize:vertical;background:#1c1713;color:var(--ink);
-           border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit}
+           border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit;margin-top:6px}
   textarea:focus{outline:none;border-color:var(--accent)}
   .hint{font-size:12.5px;color:var(--muted);margin:8px 2px 0}
   .hint code{background:#1c1713;border:1px solid var(--edge);border-radius:5px;
              padding:1px 6px;color:var(--accent);font-family:ui-monospace,monospace}
-  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;
-        color:var(--muted);margin:16px 0 8px}
-  .modes{display:flex;gap:8px;flex-wrap:wrap}
-  .mode{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;
-        padding:8px 13px;font-size:14px;cursor:pointer;transition:.12s}
-  .mode:hover{border-color:var(--accent2)}
-  .mode.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
-           border-color:var(--accent);font-weight:600}
-  .modedesc{font-size:12.5px;color:var(--muted);font-style:italic;min-height:16px;margin:8px 2px 0}
   .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}
   .fld{flex:1;min-width:150px}
   select,input[type=range]{width:100%}
@@ -41,140 +57,132 @@
          border-radius:8px;padding:8px 10px;font:inherit}
   input[type=range]{accent-color:var(--accent)}
   .val{color:var(--accent);font-variant-numeric:tabular-nums}
-  .btns{display:flex;gap:12px;margin-top:20px;align-items:center}
-  button.go{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
-         border:0;border-radius:10px;padding:12px 22px;font:600 16px/1 inherit;cursor:pointer}
-  button.go:disabled{opacity:.5;cursor:default}
-  button.ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);
-               border-radius:10px;padding:12px 18px;font:400 15px/1 inherit;cursor:pointer}
-  .status{color:var(--muted);font-size:13px;min-height:18px;margin-left:4px}
-  audio{width:100%;margin-top:18px;display:none}
-  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-  .chip{background:#221d18;border:1px dashed var(--edge);color:var(--muted);border-radius:20px;
-        padding:5px 12px;font-size:12.5px;cursor:pointer}
-  .chip:hover{border-color:var(--accent);color:var(--ink)}
+  .btns{display:flex;gap:12px;margin-top:20px;align-items:center;flex-wrap:wrap}
+  button{border:0;border-radius:10px;padding:12px 20px;font:600 15px/1 inherit;cursor:pointer}
+  .go{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a}
+  .ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);font-weight:400}
+  button:disabled{opacity:.5;cursor:default}
+  .status{color:var(--muted);font-size:13px;min-height:18px}
+  audio{width:100%;margin-top:16px;display:none}
   .meta{margin-top:10px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
+  @media(max-width:640px){.layout{flex-direction:column}.side{width:100%}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Mr. <span class="em">Bag</span></h1>
-  <p class="sub">Type. He speaks. He will not be nice about it.</p>
+  <h1><span class="em">Voice</span> Forge</h1>
+  <p class="sub">Pick a voice. Type the line. It speaks.</p>
 
-  <div class="card">
-    <textarea id="text" placeholder="Napíš, čo má Bag povedať…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
-    <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code>. Each star ≈ +150&nbsp;ms of hold, placed exactly on that vowel. Use <code>—</code> or <code>…</code> for a comedic beat.</div>
+  <div class="layout">
+    <aside class="side">
+      <h2>Voices</h2>
+      <div id="voices"></div>
+    </aside>
 
-    <label>Delivery</label>
-    <div class="modes" id="modes"></div>
-    <div class="modedesc" id="modedesc"></div>
+    <div class="card">
+      <label>Delivery</label>
+      <div class="pills" id="modes"></div>
+      <div class="modedesc" id="modedesc"></div>
 
-    <div class="chips" id="chips">
-      <span class="chip" data-m="smug"   data-t="A kto zas zachránil ten prekliaty deň? No predsa ja**. Vždy ja**.">smug win</span>
-      <span class="chip" data-m="deadpan" data-t="Máš tak tridsať životov. Prestaň fňukať.">deadpan</span>
-      <span class="chip" data-m="pissed" data-t="Nie. To si nevezmeš. Tie veci nie sú tvoje.">pissed</span>
-      <span class="chip" data-m="menace" data-t="Nie. Toto nie. Nikdy — nie toto.">menace</span>
-      <span class="chip" data-m="soft"   data-t="Dlžíš mi jeden prekliaty elixír, kámo.">soft</span>
-    </div>
+      <label>Text</label>
+      <textarea id="text" placeholder="Napíš, čo má povedať…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
+      <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). <code>—</code> or <code>…</code> = a beat. <b>Fix text</b> cleans up Slovak typos and keeps your stars.</div>
 
-    <div class="row">
-      <div class="fld">
-        <label style="margin-top:16px">Space</label>
-        <select id="space">
-          <option value="dry">dry (studio)</option>
-          <option value="room" selected>room</option>
-          <option value="hall">hall (big)</option>
-          <option value="bag">inside the bag</option>
-        </select>
+      <div class="row">
+        <div class="fld">
+          <label>Room</label>
+          <select id="space">
+            <option value="dry">dry (studio)</option>
+            <option value="room" selected>room</option>
+            <option value="hall">hall (big)</option>
+            <option value="bag">inside the bag</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>Speed · <span class="val" id="speedv">1.12×</span></label>
+          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12">
+        </div>
       </div>
-      <div class="fld">
-        <label style="margin-top:16px">Speed · <span class="val" id="speedv">1.12×</span></label>
-        <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12">
+
+      <div class="btns">
+        <button class="go" id="go">Speak</button>
+        <button class="ghost" id="fix">Fix text</button>
+        <button class="ghost" id="dl" disabled>Download</button>
+        <span class="status" id="status"></span>
       </div>
-    </div>
 
-    <div class="btns">
-      <button class="go" id="go">Speak</button>
-      <button class="ghost" id="dl" disabled>Download</button>
-      <span class="status" id="status"></span>
+      <audio id="audio" controls></audio>
+      <div class="meta" id="meta"></div>
     </div>
-
-    <audio id="audio" controls></audio>
-    <div class="meta" id="meta"></div>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-// mirror of the server mode defaults, for responsive UI
-const MODES = {
-  bro:{d:"hyped, high-spirited — talking to his guy", speed:1.12, space:"room"},
-  deadpan:{d:"dry, deadpan mockery", speed:1.05, space:"room"},
-  smug:{d:"smug, gloating, victorious", speed:1.10, space:"room"},
-  pissed:{d:"protective, furious, loud", speed:1.05, space:"room"},
-  menace:{d:"quiet, ominous, dangerous", speed:1.00, space:"hall"},
-  panic:{d:"urgent, alarmed, combat", speed:1.10, space:"room"},
-  soft:{d:"reluctant, quietly sincere", speed:1.00, space:"room"},
-};
-let mode = "bro";
-const modesEl = $("modes");
-for(const k of Object.keys(MODES)){
-  const b = document.createElement("span");
-  b.className = "mode" + (k===mode?" on":""); b.textContent = k; b.dataset.m = k;
-  modesEl.appendChild(b);
-}
+const MODEDESC = {
+  bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery",
+  smug:"smug, gloating, victorious", pissed:"protective, furious, loud",
+  menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat",
+  soft:"reluctant, quietly sincere"};
+const MODESPEED = {bro:1.12,deadpan:1.05,smug:1.10,pissed:1.05,menace:1.00,panic:1.10,soft:1.00};
+const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
+const VDESC = {bag:"sarcastic, foul-mouthed", male:"neutral NPC", female:"neutral NPC", shopkeep:"manic merchant"};
+
+let voice = "bag", mode = "bro";
+
 function setMode(k){
-  mode = k;
-  [...modesEl.children].forEach(c => c.classList.toggle("on", c.dataset.m===k));
-  $("modedesc").textContent = MODES[k].d;
-  $("speed").value = MODES[k].speed; $("speedv").textContent = MODES[k].speed.toFixed(2)+"×";
-  $("space").value = MODES[k].space;
+  mode=k;
+  [...$("modes").children].forEach(c=>c.classList.toggle("on",c.dataset.k===k));
+  $("modedesc").textContent=MODEDESC[k]||"";
+  $("speed").value=MODESPEED[k]||1.1; $("speedv").textContent=(MODESPEED[k]||1.1).toFixed(2)+"×";
+  $("space").value=MODESPACE[k]||"room";
 }
-modesEl.onclick = e => { if(e.target.dataset.m) setMode(e.target.dataset.m); };
+$("modes").innerHTML = Object.keys(MODEDESC).map(k=>`<span class="pill${k==="bro"?" on":""}" data-k="${k}">${k}</span>`).join("");
+$("modes").onclick=e=>{ if(e.target.dataset.k) setMode(e.target.dataset.k); };
 setMode("bro");
 
-const speed = $("speed"), speedv = $("speedv");
-speed.oninput = () => speedv.textContent = (+speed.value).toFixed(2) + "×";
-$("chips").onclick = e => {
-  const t = e.target.dataset.t; if(!t) return;
-  $("text").value = t; if(e.target.dataset.m) setMode(e.target.dataset.m);
-};
+// voices sidebar
+fetch("/voices").then(r=>r.json()).then(d=>{
+  voice=d.default||"bag";
+  $("voices").innerHTML=Object.entries(d.voices).map(([k,label])=>
+    `<button class="voice${k===voice?" on":""}" data-k="${k}">${label}<small>${VDESC[k]||""}</small></button>`).join("");
+}).catch(()=>{ $("voices").innerHTML='<button class="voice on" data-k="bag">Mr. Bag</button>'; });
+$("voices").onclick=e=>{ const b=e.target.closest(".voice"); if(!b) return;
+  voice=b.dataset.k; [...$("voices").children].forEach(c=>c.classList.toggle("on",c===b)); };
 
-let lastURL = null;
+$("speed").oninput=()=>$("speedv").textContent=(+$("speed").value).toFixed(2)+"×";
+
+let lastURL=null;
+function busy(b,msg){ ["go","fix","dl"].forEach(id=>$(id).disabled=b); if(b&&msg)$("status").textContent=msg; }
+
 async function speak(){
-  const text = $("text").value.trim();
-  if(!text){ $("status").textContent = "…say something."; return; }
-  $("go").disabled = true; $("dl").disabled = true;
-  $("status").textContent = "Bag is thinking…";
-  const t0 = performance.now();
+  const text=$("text").value.trim(); if(!text){ $("status").textContent="…napíš niečo."; return; }
+  busy(true,"generating…"); $("dl").disabled=true; const t0=performance.now();
   try{
-    const r = await fetch("/say", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ text, mode, speed:+speed.value, space:$("space").value })
-    });
+    const r=await fetch("/say",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text,voice,mode,speed:+$("speed").value,space:$("space").value})});
     if(!r.ok) throw new Error("server "+r.status);
-    const hz = r.headers.get("X-Bag-Hz"), drawls = r.headers.get("X-Bag-Drawls");
-    const blob = await r.blob();
-    if(lastURL) URL.revokeObjectURL(lastURL);
-    lastURL = URL.createObjectURL(blob);
-    const a = $("audio"); a.src = lastURL; a.style.display="block"; a.play();
-    const secs = ((performance.now()-t0)/1000).toFixed(1);
-    $("status").textContent = "done in " + secs + "s";
-    $("meta").textContent = "pitch " + hz + " Hz" + (drawls ? " · drawls " + drawls : "");
-    $("dl").disabled = false;
-  }catch(err){
-    $("status").textContent = "error: " + err.message;
-  }finally{ $("go").disabled = false; }
+    const hz=r.headers.get("X-Bag-Hz"), drawls=r.headers.get("X-Bag-Drawls");
+    const blob=await r.blob();
+    if(lastURL)URL.revokeObjectURL(lastURL); lastURL=URL.createObjectURL(blob);
+    const a=$("audio"); a.src=lastURL; a.style.display="block"; a.play().catch(()=>{});
+    $("status").textContent="done in "+((performance.now()-t0)/1000).toFixed(1)+"s";
+    $("meta").textContent="pitch "+hz+" Hz"+(drawls?" · drawls "+drawls:"");
+    $("dl").disabled=false;
+  }catch(e){ $("status").textContent="error: "+e.message; } finally{ ["go","fix"].forEach(id=>$(id).disabled=false); }
 }
-$("go").onclick = speak;
-$("text").addEventListener("keydown", e => {
-  if((e.metaKey||e.ctrlKey) && e.key==="Enter") speak();
-});
-$("dl").onclick = () => {
-  if(!lastURL) return;
-  const a = document.createElement("a");
-  a.href = lastURL; a.download = "bag.wav"; a.click();
-};
+async function fixText(){
+  const text=$("text").value.trim(); if(!text) return;
+  busy(true,"fixing…");
+  try{
+    const r=await fetch("/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    const d=await r.json(); if(d.text) $("text").value=d.text;
+    $("status").textContent=d.error?("fix error: "+d.error):"text fixed";
+  }catch(e){ $("status").textContent="error: "+e.message; } finally{ busy(false); $("dl").disabled=!lastURL; }
+}
+$("go").onclick=speak; $("fix").onclick=fixText;
+$("dl").onclick=()=>{ if(!lastURL)return; const a=document.createElement("a"); a.href=lastURL; a.download=voice+".wav"; a.click(); };
+$("text").addEventListener("keydown",e=>{ if((e.metaKey||e.ctrlKey)&&e.key==="Enter") speak(); });
 </script>
 </body>
 </html>
