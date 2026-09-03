@@ -59,10 +59,10 @@ LLM_URL = os.environ.get("BAG_LLM_URL", "http://127.0.0.1:11434")
 LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "huihui_ai/qwen3.8-abliterated:27b")
 STT_URL = os.environ.get("BAG_STT_URL", "https://127.0.0.1:8443/stt")
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
-# Auto speed = the mode's native pace (the model's own speed tokens). Only when a
-# line is clearly slow (below SLOW wps) do we nudge it toward TARGET, capped 1.12x.
-ADAPTIVE_TARGET_WPS = float(os.environ.get("BAG_TARGET_WPS", "2.7"))
-ADAPTIVE_SLOW_WPS = float(os.environ.get("BAG_SLOW_WPS", "2.2"))
+# Adaptive speed: the pace of the speech itself is measured (deliberate drawls,
+# breaks and chunk gaps subtracted) and pulled toward the delivery mode's target
+# words/sec — slow lines speed up, rushed lines ease off. Fallback target here.
+ADAPTIVE_TARGET_WPS = float(os.environ.get("BAG_TARGET_WPS", "2.8"))
 
 # --------------------------------------------------------------------- voices
 # Each voice is a reference clip + its transcript (transcript materially improves
@@ -215,6 +215,27 @@ MODES = {
 }
 DEFAULT_MODE = "bro"
 
+# Target articulation rate per delivery mode in SYLLABLES/sec. Words/sec is a
+# bad pace metric for Slovak (long words) — it read every line as slow and
+# pinned the stretch at its cap. Syllable rate is what phonetics uses and is
+# language-independent enough for SK/EN. Provisional values.
+MODE_SPS = {"bro": 5.2, "deadpan": 4.5, "smug": 4.8, "pissed": 5.6,
+            "menace": 3.8, "panic": 6.0, "soft": 4.2}
+_VOW = "aeiouyáéíóúýäô"
+_SYL_DIPH = re.compile(r"i[aeu]|ô")
+_SYL_RL = re.compile(r"(?:^|[^aeiouyáéíóúýäô\W])[rlŕĺ](?=[^aeiouyáéíóúýäô\W]|$)")
+
+
+def _syllables(text: str) -> int:
+    """Rough syllable count for Slovak/English: vowel nuclei, diphthongs
+    (ia ie iu ô) counted once, syllabic r/l between consonants."""
+    n = 0
+    for w in re.findall(r"[a-záéíóúýäôčšžťďňľŕĺ']+", text.lower()):
+        v = sum(1 for ch in w if ch in _VOW) - len(_SYL_DIPH.findall(w))
+        rl = len(_SYL_RL.findall(w))
+        n += (v + rl) if v > 0 else (rl or 1)
+    return max(1, n)
+
 
 def _beats(text: str) -> str:
     """Turn Bag's written pauses into real ones. Em-dashes and ellipses are
@@ -319,6 +340,19 @@ def _trim(pcm: bytes, sr: int) -> bytes:
            "-af", af, "-f", "s16le", "pipe:1"]
     return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL).stdout or pcm
+
+
+def _speech_seconds(pcm: bytes, sr: int, floor_db: float = -40.0) -> float:
+    """Seconds of actual speech: 20 ms frames whose RMS is above floor_db.
+    Pauses (the model's own and our breaks) are excluded, so a rate computed
+    over this is an articulation rate, not a words-over-silence rate."""
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    hop = int(sr * 0.02)
+    if x.size < hop:
+        return x.size / sr
+    n = x.size // hop
+    rms = np.sqrt(np.mean(x[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    return float(np.count_nonzero(20 * np.log10(rms) > floor_db)) * hop / sr
 
 
 # Real reverbs (Freeverb-class algorithm via pedalboard), not an echo filter.
@@ -432,7 +466,7 @@ def _render(text: str, voice_key: str, mode_key: str,
     # stable and the model's runaway on long inputs is bounded. Markup (** and
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
-    parts, drawls, meta, sr, total_words = [], [], {}, 24000, 0
+    parts, drawls, meta, sr, total_words, total_syl = [], [], {}, 24000, 0, 0
     for chunk in _chunks(text):
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
@@ -441,6 +475,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
         drawls += applied
         total_words += len(clean.split())
+        total_syl += _syllables(chunk.replace("*", ""))
         meta = meta or cmeta
         parts.append(pcm)
     if not parts:
@@ -453,11 +488,19 @@ def _render(text: str, voice_key: str, mode_key: str,
     # An explicit speed from the UI overrides.
     pcm = _trim(pcm, sr)                    # silence trim + runaway-pause clamp first
     if speed is None:
-        # auto = the mode's native pace; a gentle nudge only when clearly slow
-        dur = max(0.2, len(pcm) / (2 * sr))
-        wps = max(1, total_words) / dur
-        sp = 1.0 if wps >= ADAPTIVE_SLOW_WPS else min(1.12, ADAPTIVE_TARGET_WPS / wps)
+        # adaptive: pace of the speech itself (deliberate drawls, breaks and
+        # chunk gaps subtracted), pulled toward this mode's target — both ways.
+        # speech-only time (energy gate drops pauses/breaks), minus the
+        # deliberate drawl holds, which are voiced but not "pace"
+        held = sum(ms for lbl, ms in drawls if not lbl.endswith("|")) / 1000.0
+        dur = max(0.3, _speech_seconds(pcm, sr) - held)
+        sps = max(1, total_syl) / dur                 # articulation rate, syl/s
+        target = MODE_SPS.get(mode_key, 4.8)
+        sp = max(0.88, min(1.18, target / sps))
+        if abs(sp - 1.0) < 0.05:
+            sp = 1.0
         meta["adaptive_speed"] = round(sp, 2)
+        meta["sps"] = round(sps, 2)
     else:
         sp = speed
     return _process(pcm, sr, sp, spc), meta, drawls
@@ -468,6 +511,7 @@ def _audio_response(wav, meta, drawls, extra=None) -> Response:
                "X-Bag-Tries": ",".join(map(str, meta.get("tries", []))),
                "X-Bag-Speed": str(meta.get("adaptive_speed", "")),
                "X-Bag-Chunks": str(meta.get("chunks", 1)),
+               "X-Bag-Sps": str(meta.get("sps", "")),
                "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
     if extra:
         headers.update(extra)
