@@ -169,7 +169,7 @@ VOICES = {
                "text": ("By repeating what students say, teachers can demonstrate "
                         "that they are listening. By extending what students say.")},
     "shopkeep": {"ref": "/refs/shopkeep_ref.wav", "label": "Crazy Shopkeep (male)", "desc": "manic merchant",
-                 "pitch": "", "band": (105, 255), "persona": SHOPKEEP_PERSONA,
+                 "pitch": "", "band": (85, 175), "persona": SHOPKEEP_PERSONA,
                  "persona_en": SHOPKEEP_PERSONA_EN,
                  "text": ("Why are you guys so anti-dictators? Imagine if America was "
                           "a dictatorship. You could let one percent of the people "
@@ -290,7 +290,7 @@ MODES = {
                 "speed": 1.05, "space": "room", "beats": False,
                 "desc": "protective, furious, loud"},
     # the One Thing — quiet, ominous, slow. 'Not that one.'
-    "menace":  {"lead": "<|style:whispering|><|emotion:contemplation|><|prosody:speed_slow|>",
+    "menace":  {"lead": "<|emotion:contemplation|><|prosody:expressive_low|><|prosody:speed_slow|>",
                 "speed": 1.00, "space": "hall", "beats": True,
                 "desc": "quiet, ominous, dangerous"},
     # combat urgency / panic — fast, alarmed
@@ -373,14 +373,15 @@ def _f0(pcm: bytes, sr: int) -> float:
     return sr / best[1] if best[1] else 0.0
 
 
-def _synth(text: str, seed: int, ref: str, ref_text: str, max_tokens: int = 700) -> tuple[bytes, int]:
+def _synth(text: str, seed: int, ref: str, ref_text: str, max_tokens: int = 700,
+           extra_refs=None) -> tuple[bytes, int]:
     # the server's own defaults are T=1.0 with NO top_k/top_p (unfiltered) and
     # no repetition penalty at all — always send explicit, tamer sampling
     body = {"model": "/model", "stream": True, "response_format": "pcm",
             "temperature": 0.75, "top_k": 24, "top_p": 0.95,
             "max_new_tokens": max_tokens, "seed": seed,
             "voice": "default", "input": text,
-            "references": [{"audio_path": ref, "text": ref_text}]}
+            "references": [{"audio_path": ref, "text": ref_text}] + list(extra_refs or [])}
     req = urllib.request.Request(TTS_URL + "/v1/audio/speech",
                                  data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
@@ -396,13 +397,13 @@ _TTS_LOCK = threading.BoundedSemaphore(4)   # the server batches concurrent requ
 
 
 def voice_gen(text: str, voice: dict, max_tokens: int = 700,
-              seed_hint=None, want: int = 1) -> list:
+              seed_hint=None, want: int = 1, extra_refs=None) -> list:
     with _TTS_LOCK:
-        return _voice_gen_unlocked(text, voice, max_tokens, seed_hint, want)
+        return _voice_gen_unlocked(text, voice, max_tokens, seed_hint, want, extra_refs)
 
 
 def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
-                        seed_hint=None, want: int = 1) -> list:
+                        seed_hint=None, want: int = 1, extra_refs=None) -> list:
     """Generate until the pitch lands in this voice's band — the same gate that
     keeps Bag from drifting female also keeps a female voice from drifting deep.
     A seed that already worked (seed_hint) is tried first: seeds are
@@ -420,10 +421,10 @@ def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
         batch = seeds[pos:pos + max(1, want - len(hits))]
         pos += len(batch)
         if len(batch) == 1:
-            results = [(batch[0],) + _synth(text, batch[0], voice["ref"], voice["text"], max_tokens)]
+            results = [(batch[0],) + _synth(text, batch[0], voice["ref"], voice["text"], max_tokens, extra_refs)]
         else:                                   # fire the batch at once; the server batches decode
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as ex:
-                futs = [ex.submit(_synth, text, sd, voice["ref"], voice["text"], max_tokens) for sd in batch]
+                futs = [ex.submit(_synth, text, sd, voice["ref"], voice["text"], max_tokens, extra_refs) for sd in batch]
                 results = [(sd,) + f.result() for sd, f in zip(batch, futs)]
         for seed, pcm, sr in results:
             hz = _f0(pcm, sr)
@@ -735,7 +736,8 @@ def _plan_parts(text: str, mode_key: str, modes=None, pauses=None) -> list:
 
 def _render(text: str, voice_key: str, mode_key: str,
             speed=None, space=None, emotion="", lang: str = "sk",
-            paces=None, song=False, tempo=None, modes=None, pauses=None) -> tuple[bytes, dict, list]:
+            paces=None, song=False, tempo=None, modes=None, pauses=None,
+            seed=None) -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
@@ -774,7 +776,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         offs.append(off)
         off += len([x for x in _SENT.split(chunk) if x.strip()])
 
-    def render_part(idx: int, seed_hint, want: int):
+    def render_part(idx: int, seed_hint, want: int, extra_refs=None):
         chunk, part_mode, gap_after = plan[idx]
         lead = _lead_for(part_mode)
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
@@ -784,7 +786,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         est = (_syllables(_spoken(clean)) / 4.5 + sum(m[3] for m in marks) * 0.15
                + 0.6 * clean.count("<|prosody:") + 1.0)
         max_tokens = max(150, min(900, int(est * 25 * 1.6) + 60))
-        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, want)
+        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, want, extra_refs)
         lo, hi = v["band"]
         mid = (lo + hi) / 2
         exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(part_mode, 5.4)
@@ -812,6 +814,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         cmeta["cer"] = cer
         cmeta["candidates"] = len(scored)
         cmeta["score"] = round(sc, 3)
+        raw_pcm = pcm                                    # unprocessed take (continuity ref)
         pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
         f, r = [], []
         if speed is None:
@@ -822,16 +825,34 @@ def _render(text: str, voice_key: str, mode_key: str,
         # clamp this part's own internal pauses; director gaps are added at the join
         pcm = _trim(pcm, sr, max(pause_floor, MODE_PAUSE.get(part_mode, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0)))
         return {"pcm": pcm, "sr": sr, "meta": cmeta, "applied": applied, "f": f, "r": r,
-                "mode": part_mode, "gap": gap_after}
+                "mode": part_mode, "gap": gap_after, "clean": clean, "raw": raw_pcm}
 
     results = [None] * len(plan)
-    results[0] = render_part(0, None, BEST_OF)             # best-of-N takes, in parallel
+    results[0] = render_part(0, seed, 1 if seed is not None else BEST_OF)   # a given seed = that exact take
     seed_hint = results[0]["meta"].get("accepted_seed") if results[0] else None
-    if len(plan) > 1:                                      # remaining parts together, same seed
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan) - 1)) as ex:
-            futs = {i: ex.submit(render_part, i, seed_hint, 1) for i in range(1, len(plan))}
-            for i, fu in futs.items():
-                results[i] = fu.result()
+    if len(plan) > 1:
+        # long text: chunks render in order, each conditioned on the previous
+        # chunk's audio as a second reference (voice continuity, as boson's own
+        # long-form pipeline keeps prior audio in context)
+        prev = results[0]
+        for i in range(1, len(plan)):
+            extra = None
+            if prev and prev.get("raw"):
+                tmp = os.path.join(USER_VOICE_DIR, f"_cont_{hashlib.sha1(prev['raw'][:4000]).hexdigest()[:10]}.wav")
+                try:
+                    os.makedirs(USER_VOICE_DIR, exist_ok=True)
+                    with open(tmp, "wb") as f:
+                        f.write(_wav(prev["raw"][-int(12 * prev["sr"]) * 2:], prev["sr"]))
+                    extra = [{"audio_path": tmp, "text": _spoken(prev["clean"])[-300:]}]
+                except Exception:                           # noqa: BLE001
+                    extra = None
+            results[i] = render_part(i, seed_hint, 1, extra)
+            if extra:
+                try:
+                    os.remove(extra[0]["audio_path"])
+                except Exception:                           # noqa: BLE001
+                    pass
+            prev = results[i]
 
     parts, drawls, meta, sr, factors, rates, part_modes, gaps = [], [], {}, 24000, [], [], [], []
     for res in results:
@@ -867,6 +888,7 @@ def _audio_response(wav, meta, drawls, extra=None) -> Response:
                "X-Bag-Speed": str(meta.get("adaptive_speed", "")),
                "X-Bag-Chunks": str(meta.get("chunks", 1)),
                "X-Bag-Sps": str(meta.get("sps", "")),
+               "X-Bag-Seed": str(meta.get("accepted_seed", "")),
                "X-Bag-Pace": str(meta.get("pace", "")),
                "X-Bag-Cer": str(meta.get("cer", "")),
                "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
@@ -979,6 +1001,7 @@ class SayReq(BaseModel):
     song: bool = False
     paces: list | None = None      # per-sentence slow/normal/fast
     tempo: int | None = None       # voice-speed dial -2..2 (None = mode default)
+    seed: int | None = None        # reproducible take (tried first by the gate)
     modes: list | None = None      # per-sentence modes (director or client)
     pauses: list | None = None     # per-sentence pause after: none/short/long
     voice: str = DEFAULT_VOICE
@@ -1112,7 +1135,7 @@ def say(req: SayReq):
     if not text:
         return Response(status_code=400, content="empty text")
     key = hashlib.sha1(json.dumps([text, req.voice, req.mode, req.lang, req.speed, req.space,
-                                   req.emotion, req.direct, req.scene, req.song, req.paces, req.tempo, req.modes, req.pauses],
+                                   req.emotion, req.direct, req.scene, req.song, req.paces, req.tempo, req.modes, req.pauses, req.seed],
                                   ensure_ascii=False).encode("utf-8")).hexdigest()
     hit = _CACHE.get(key)
     if hit:                                          # identical line: instant replay
@@ -1128,7 +1151,7 @@ def say(req: SayReq):
         mode, paces, tempo, modes, pauses = _direct(text, req.voice, req.lang, req.scene)
     wav, meta, drawls = _render(text, req.voice, mode, req.speed, req.space, req.emotion,
                                 req.lang, paces=paces, song=req.song, tempo=tempo, modes=modes,
-                                pauses=pauses)
+                                pauses=pauses, seed=req.seed)
     meta["paces"] = list(paces or [])
     meta["modes"] = list(modes or [])
     meta["pauses"] = list(pauses or [])
@@ -1141,6 +1164,71 @@ def say(req: SayReq):
                                                "X-Bag-Modes": ",".join(meta.get("modes", [])),
                                                "X-Bag-Pauses": ",".join(meta.get("pauses", [])),
                                                "X-Bag-Tempo": meta.get("tempo", "")})
+
+
+_SCRIPT_LINE = re.compile(r"^\s*\[([^\]]+)\]\s*(.+?)\s*$")
+
+
+def _resolve_voice(tag: str) -> str:
+    t = tag.strip().lower()
+    if t in VOICES:
+        return t
+    alias = {"adam": "male", "clara": "female", "shop": "shopkeep", "vak": "bag", "mr. bag": "bag"}
+    if t in alias:
+        return alias[t]
+    for k, v in VOICES.items():
+        if v["label"].lower().startswith(t):
+            return k
+    return DEFAULT_VOICE
+
+
+class ScriptReq(BaseModel):
+    text: str                      # lines like "[bag] ...", "[shopkeep] ...", "[clara] ..."
+    lang: str = "sk"
+    direct: bool = False
+    scene: str = ""
+    mode: str = DEFAULT_MODE       # manual mode for all lines when not directed
+    space: str | None = None
+    tempo: int | None = None
+    gap: float = 0.35              # seconds between lines
+
+
+@app.post("/script")
+def script(req: ScriptReq):
+    """Multi-speaker exchange (higgs-audio-web's [SPEAKERn] mode, with our
+    voices): every '[voice] line' renders in that voice — its own take, its own
+    identity — and the lines are joined with a short gap."""
+    lines = []
+    for ln in req.text.splitlines():
+        m = _SCRIPT_LINE.match(ln)
+        if m:
+            lines.append((_resolve_voice(m.group(1)), m.group(2)))
+        elif ln.strip() and lines:
+            lines[-1] = (lines[-1][0], lines[-1][1] + " " + ln.strip())
+    if not lines:
+        return Response(status_code=400, content="no [voice] lines")
+
+    def one(i):
+        vk, txt = lines[i]
+        mode, paces, tempo, modes, pauses = req.mode, None, req.tempo, None, None
+        if req.direct:
+            mode, paces, tempo, modes, pauses = _direct(txt, vk, req.lang, req.scene)
+        wav, meta, _ = _render(txt, vk, mode, None, req.space, "", req.lang, paces=paces,
+                               tempo=tempo, modes=modes, pauses=pauses)
+        return wav, mode
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(lines))) as ex:
+        outs = list(ex.map(one, range(len(lines))))
+    sr, pcm_parts = 24000, []
+    for wav, _ in outs:
+        w = wave.open(BytesIO(wav))
+        sr = w.getframerate()
+        pcm_parts.append(w.readframes(w.getnframes()))
+    gap = b"\x00\x00" * int(max(0.05, req.gap) * sr)
+    joined = gap.join(pcm_parts)
+    plan = ";".join(f"{vk}:{mode}" for (vk, _), (_, mode) in zip(lines, outs))
+    return Response(content=_wav(joined, sr), media_type="audio/wav",
+                    headers={"X-Bag-Lines": str(len(lines)), "X-Bag-Script": quote(plan)})
 
 
 @app.post("/respond")
@@ -1195,7 +1283,7 @@ TEMPO_DOWN = {-2: 0.72, -1: 0.82, 0: 0.94, 1: 0.97, 2: 1.0}
 TEMPO_PAUSE = {-2: 1.5, -1: 1.2, 0: 1.0, 1: 0.8, 2: 0.65}
 DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "suché, bez emócií, ironické",
                      "smug": "samoľúby, chvastavý", "pissed": "nahnevaný, ochranársky, hlasný",
-                     "menace": "tichý, výhražný šepot", "panic": "panika, boj, rýchle",
+                     "menace": "tichý, výhražný, stíšený", "panic": "panika, boj, rýchle",
                      "soft": "neochotne úprimné, mäkké", "friendly": "priateľské, vrelé privítanie",
                      "business": "vecné, obchodné", "happy": "radostné, nadšené",
                      "curious": "zvedavé", "sad": "smutné, ťažké", "disgusted": "znechutené",
@@ -1387,6 +1475,17 @@ def _warm():
         except Exception:      # noqa: BLE001
             pass
     threading.Thread(target=_ping_llm, daemon=True).start()
+
+
+@app.get("/status")
+def status():
+    def ok(url, **kw):
+        try:
+            return requests.get(url, timeout=3, **kw).status_code < 500
+        except Exception:                                   # noqa: BLE001
+            return False
+    return {"tts": ok(TTS_URL + "/health"), "stt": ok(STT_URL.rsplit("/", 1)[0] + "/health", verify=False),
+            "llm_gpu": _llm_on_gpu(), "voices": len(VOICES)}
 
 
 @app.get("/healthz")

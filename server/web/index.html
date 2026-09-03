@@ -83,7 +83,7 @@
 <body>
 <div class="wrap">
   <h1><span class="em">Voice</span> Forge</h1>
-  <p class="sub">Pick a voice. Write the line. Speak it now, or let the director shape it.</p>
+  <p class="sub">Pick a voice. Write the line. Speak it now, or let the director shape it. <span id="sys" style="font-style:normal;font-size:12.5px;color:var(--muted)"></span></p>
 
   <div class="layout">
     <aside class="side">
@@ -105,7 +105,7 @@
         <textarea id="scene" placeholder="napr. v goblinej jaskyni, tulák práve zlyhal na nenápadnosti…"></textarea>
         <label>Text</label>
         <textarea id="text" placeholder="Napíš…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
-        <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code>; <code>...</code> or two TABs = a long one. <b>Fix text</b> cleans typos and keeps your marks.</div>
+        <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code>; <code>...</code> or two TABs = a long one. <b>Fix text</b> cleans typos and keeps your marks. <b>Script:</b> start lines with a voice tag — <code>[bag] …</code> <code>[shopkeep] …</code> <code>[clara] …</code> — and the whole exchange plays, each line in its voice.</div>
       </section>
 
       <section class="sec">
@@ -148,6 +148,10 @@
             </label>
             <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.0">
           </div>
+        </div>
+        <div class="grid2" style="margin-top:10px">
+          <div><label>Seed (optional — same seed, same take)</label><input type="text" id="seed" placeholder="leave empty for best-of-2" inputmode="numeric"></div>
+          <div><label>Recent takes</label><div id="history" class="hint" style="margin:0"></div></div>
         </div>
         <div class="btns">
           <button class="go" id="go">Speak now</button>
@@ -246,7 +250,8 @@ async function loadVoices(select){
 $("voices").onclick = async e => {
   const del = e.target.closest(".del");
   if (del) { e.stopPropagation(); if (!confirm("Delete this voice?")) return;
-    await fetch("/voices/" + encodeURIComponent(del.dataset.del), {method:"DELETE"}); if (voice === del.dataset.del) voice = "bag"; loadVoices(); return; }
+    await fetch("/voices/" + encodeURIComponent(del.dataset.del), {method:"DELETE"}); if (voice === del.dataset.del) voice = "bag"; loadVoices();
+fetch("/status").then(r => r.json()).then(d => { $("sys").textContent = "· TTS " + (d.tts ? "✓" : "✗") + " · whisper " + (d.stt ? "✓" : "✗") + " · brain " + (d.llm_gpu ? "on GPU" : "loading…") + " · " + d.voices + " voices"; }).catch(() => {}); return; }
   const b = e.target.closest(".voice"); if (!b) return;
   if (b.dataset.k === "__add") { openCreator(); return; }
   voice = b.dataset.k; [...$("voices").children].forEach(c => c.classList.toggle("on", c === b)); loadPhrases();
@@ -289,19 +294,46 @@ function showBreakdown(text, modes, paces, tempo, pauses){
   $("breakdown").innerHTML = html; $("breakdown").style.display = "block"; $("dirhint").style.display = "none";
 }
 
+const takes = [];
+function remember(label, blob, secs){
+  takes.unshift({label, url: URL.createObjectURL(blob), secs}); if (takes.length > 6) URL.revokeObjectURL(takes.pop().url);
+  $("history").innerHTML = takes.map((t, i) => `<a href="#" data-i="${i}" style="color:var(--ink);text-decoration:none;display:block">▶ ${esc(t.label)} <span style="color:var(--muted)">${t.secs}s</span></a>`).join("");
+}
+$("history").onclick = e => { const a = e.target.closest("a"); if (!a) return; e.preventDefault(); const t = takes[+a.dataset.i]; const au = $("audio"); au.src = t.url; au.style.display = "block"; au.play().catch(() => {}); };
+async function speakScript(){
+  const text = $("text").value.trim();
+  busy(true, "rendering the exchange…"); const t0 = performance.now();
+  try {
+    const r = await fetch("/script", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text, lang, direct: false, scene: $("scene").value, mode, space: $("space").value,
+        tempo: $("tempoauto").checked ? null : +$("tempo").value})});
+    if (!r.ok) throw new Error("server " + r.status);
+    const plan = decodeURIComponent(r.headers.get("X-Bag-Script") || "");
+    const blob = await r.blob(); play(blob);
+    const secs = ((performance.now()-t0)/1000).toFixed(1);
+    $("status").textContent = "script · " + r.headers.get("X-Bag-Lines") + " lines · " + secs + "s";
+    $("meta").textContent = plan.replace(/;/g, " · ");
+    $("audio").onloadedmetadata = () => remember("script: " + text.slice(0, 40), blob, $("audio").duration.toFixed(1));
+  } catch (err) { $("status").textContent = "error: " + err.message; }
+  finally { busy(false); }
+}
 async function speak(directed){
   const text = $("text").value.trim(); if (!text) { $("status").textContent = "…say something."; return; }
+  if (/^\s*\[[^\]]+\]/m.test(text)) return speakScript();
   busy(true, directed ? "director is splitting the line…" : "speaking…"); const t0 = performance.now();
   try {
     const body = {text, voice, mode, lang, direct: !!directed, scene: $("scene").value, song: $("song").checked,
       speed: $("autospeed").checked ? null : +$("speed").value, space: $("space").value,
-      tempo: (directed || $("tempoauto").checked) ? null : +$("tempo").value};
+      tempo: (directed || $("tempoauto").checked) ? null : +$("tempo").value,
+      seed: $("seed").value.trim() ? +$("seed").value.trim() : null};
     const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     if (!r.ok) throw new Error("server " + r.status);
     const hz = r.headers.get("X-Bag-Hz"), sp = r.headers.get("X-Bag-Speed"), chosen = r.headers.get("X-Bag-Mode"),
           paces = r.headers.get("X-Bag-Paces"), modes = r.headers.get("X-Bag-Modes"), tempo = r.headers.get("X-Bag-Tempo"), drawls = r.headers.get("X-Bag-Drawls"), pauses = r.headers.get("X-Bag-Pauses");
     if (directed) showBreakdown(text, modes, paces, tempo, pauses); else { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; }
-    play(await r.blob());
+    const blob = await r.blob(); play(blob);
+    const seedUsed = r.headers.get("X-Bag-Seed");
+    $("audio").onloadedmetadata = () => remember((directed ? "directed: " : "") + text.slice(0, 40) + (seedUsed ? " · seed " + seedUsed : ""), blob, $("audio").duration.toFixed(1));
     $("status").textContent = (directed ? "directed take" : "instant take") + " · " + ((performance.now()-t0)/1000).toFixed(1) + "s";
     $("meta").textContent = "pitch " + hz + " Hz" + (sp ? " · speed " + sp + "×" : "") + (chosen && directed ? " · mode " + chosen : "")
       + (tempo ? " · tempo " + (TEMPO_NAMES[tempo]||tempo) : "") + (drawls ? " · marks " + drawls : "");
