@@ -1,0 +1,18 @@
+# model weights — pulled from HuggingFace, never committed
+models/
+*.safetensors
+*.gguf
+
+# generated + reference audio
+out/
+*.wav
+!docs/**/*.wav
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.hfvenv/
+
+# local scratch
+*.log
