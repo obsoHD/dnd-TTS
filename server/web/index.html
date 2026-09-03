@@ -182,18 +182,14 @@ $("phrases").onclick=async e=>{
   const b=e.target.closest(".ph"); if(!b) return;
   const type=b.textContent;
   [...$("phrases").children].forEach(c=>c.disabled=true);
-  $("status").textContent="improvising “"+type+"”…"; const t0=performance.now();
+  $("status").textContent="improvising “"+type+"”…";
   try{
-    const r=await fetch("/line",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({voice,mode,type,lang,speed:+$("speed").value,space:$("space").value})});
+    const r=await fetch("/linetext",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({voice,type,lang})});
     if(!r.ok) throw new Error("server "+r.status);
-    const line=decodeURIComponent(r.headers.get("X-Bag-Line")||""), hz=r.headers.get("X-Bag-Hz");
-    $("text").value=line;
-    const blob=await r.blob();
-    if(lastURL)URL.revokeObjectURL(lastURL); lastURL=URL.createObjectURL(blob);
-    const a=$("audio"); a.src=lastURL; a.style.display="block"; a.play().catch(()=>{});
-    $("status").textContent="done in "+((performance.now()-t0)/1000).toFixed(1)+"s";
-    $("meta").textContent="pitch "+hz+" Hz"; $("dl").disabled=false;
+    const d=await r.json();
+    $("text").value=d.text||""; $("text").focus();
+    $("status").textContent="line ready — read it, then press Speak";
   }catch(err){ $("status").textContent="error: "+err.message; }
   finally{ [...$("phrases").children].forEach(c=>c.disabled=false); }
 };

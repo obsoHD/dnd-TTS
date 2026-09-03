@@ -375,17 +375,26 @@ def phrases(voice: str = DEFAULT_VOICE):
     return {"voice": voice, "types": PHRASE_TYPES.get(voice, NPC_PHRASE_TYPES)}
 
 
+def _improv_line(voice_key: str, kind: str, lang: str) -> str:
+    v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
+    prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind or 'replika'}. "
+              f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
+              f"{_lang_rule(lang)}")
+    text = _llm_reply(prompt, v["persona"], None, temperature=0.95, num_predict=90)
+    return text.strip().strip('"').split("\n")[0].strip()
+
+
+@app.post("/linetext")
+def linetext(req: LineReq):
+    """Click a phrase-type -> the LLM improvises a line. TEXT ONLY, so it lands in
+    the box to read; the user triggers Speak themselves."""
+    return {"text": _improv_line(req.voice, (req.type or "").strip(), req.lang)}
+
+
 @app.post("/line")
 def line(req: LineReq):
-    """Click a phrase-type -> the LLM improvises a fresh in-character line of that
-    type -> speak it. Returns audio + the generated text (so it can be tweaked)."""
-    v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
-    kind = (req.type or "replika").strip()
-    prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind}. "
-              f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
-              f"{_lang_rule(req.lang)}")
-    text = _llm_reply(prompt, v["persona"], None, temperature=0.95, num_predict=90)
-    text = text.strip().strip('"').split("\n")[0].strip()
+    """Improvise a line AND speak it (kept for callers that want one shot)."""
+    text = _improv_line(req.voice, (req.type or "").strip(), req.lang)
     wav, meta, drawls = _render(text, req.voice, req.mode, req.speed, req.space)
     return _audio_response(wav, meta, drawls, {"X-Bag-Line": quote(text)})
 
