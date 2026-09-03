@@ -13,35 +13,46 @@
   body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);
        color:var(--ink);font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;
        display:flex;align-items:flex-start;justify-content:center;padding:32px 16px}
-  .wrap{width:100%;max-width:680px}
+  .wrap{width:100%;max-width:700px}
   h1{font-size:30px;margin:0 0 2px;letter-spacing:.5px}
   h1 .em{color:var(--accent)}
   .sub{color:var(--muted);margin:0 0 22px;font-style:italic;font-size:15px}
   .card{background:var(--panel);border:1px solid var(--edge);border-radius:14px;
         padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  textarea{width:100%;min-height:110px;resize:vertical;background:#1c1713;color:var(--ink);
+  textarea{width:100%;min-height:96px;resize:vertical;background:#1c1713;color:var(--ink);
            border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit}
   textarea:focus{outline:none;border-color:var(--accent)}
-  .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px}
-  .fld{flex:1;min-width:150px}
+  .hint{font-size:12.5px;color:var(--muted);margin:8px 2px 0}
+  .hint code{background:#1c1713;border:1px solid var(--edge);border-radius:5px;
+             padding:1px 6px;color:var(--accent);font-family:ui-monospace,monospace}
   label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;
-        color:var(--muted);margin-bottom:6px}
+        color:var(--muted);margin:16px 0 8px}
+  .modes{display:flex;gap:8px;flex-wrap:wrap}
+  .mode{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;
+        padding:8px 13px;font-size:14px;cursor:pointer;transition:.12s}
+  .mode:hover{border-color:var(--accent2)}
+  .mode.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
+           border-color:var(--accent);font-weight:600}
+  .modedesc{font-size:12.5px;color:var(--muted);font-style:italic;min-height:16px;margin:8px 2px 0}
+  .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}
+  .fld{flex:1;min-width:150px}
   select,input[type=range]{width:100%}
   select{background:#1c1713;color:var(--ink);border:1px solid var(--edge);
          border-radius:8px;padding:8px 10px;font:inherit}
   input[type=range]{accent-color:var(--accent)}
   .val{color:var(--accent);font-variant-numeric:tabular-nums}
   .btns{display:flex;gap:12px;margin-top:20px;align-items:center}
-  button{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
+  button.go{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
          border:0;border-radius:10px;padding:12px 22px;font:600 16px/1 inherit;cursor:pointer}
-  button:disabled{opacity:.5;cursor:default}
-  button.ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);font-weight:400}
+  button.go:disabled{opacity:.5;cursor:default}
+  button.ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);
+               border-radius:10px;padding:12px 18px;font:400 15px/1 inherit;cursor:pointer}
   .status{color:var(--muted);font-size:13px;min-height:18px;margin-left:4px}
   audio{width:100%;margin-top:18px;display:none}
-  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-  .chip{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:20px;
-        padding:6px 13px;font-size:13px;cursor:pointer}
-  .chip:hover{border-color:var(--accent)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{background:#221d18;border:1px dashed var(--edge);color:var(--muted);border-radius:20px;
+        padding:5px 12px;font-size:12.5px;cursor:pointer}
+  .chip:hover{border-color:var(--accent);color:var(--ink)}
   .meta{margin-top:10px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
 </style>
 </head>
@@ -51,31 +62,24 @@
   <p class="sub">Type. He speaks. He will not be nice about it.</p>
 
   <div class="card">
-    <textarea id="text" placeholder="Napíš, čo má Bag povedať…">Nie. To si nevezmeš, kamoš. Tie prekliate veci nie sú tvoje.</textarea>
+    <textarea id="text" placeholder="Napíš, čo má Bag povedať…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
+    <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code>. Each star ≈ +150&nbsp;ms of hold, placed exactly on that vowel. Use <code>—</code> or <code>…</code> for a comedic beat.</div>
+
+    <label>Delivery</label>
+    <div class="modes" id="modes"></div>
+    <div class="modedesc" id="modedesc"></div>
 
     <div class="chips" id="chips">
-      <span class="chip" data-t="Zase ja? No jasné. Kto iný by to spravil.">smug</span>
-      <span class="chip" data-t="To je tvoj plán? Ja som len vak a mám lepší.">taunt</span>
-      <span class="chip" data-t="Nie. Toto nie. Nikdy nie toto.">refuse</span>
-      <span class="chip" data-t="Hoď si na to. A modli sa.">roll</span>
+      <span class="chip" data-m="smug"   data-t="A kto zas zachránil ten prekliaty deň? No predsa ja**. Vždy ja**.">smug win</span>
+      <span class="chip" data-m="deadpan" data-t="Máš tak tridsať životov. Prestaň fňukať.">deadpan</span>
+      <span class="chip" data-m="pissed" data-t="Nie. To si nevezmeš. Tie veci nie sú tvoje.">pissed</span>
+      <span class="chip" data-m="menace" data-t="Nie. Toto nie. Nikdy — nie toto.">menace</span>
+      <span class="chip" data-m="soft"   data-t="Dlžíš mi jeden prekliaty elixír, kámo.">soft</span>
     </div>
 
     <div class="row">
       <div class="fld">
-        <label>Emotion</label>
-        <select id="emotion">
-          <option value="">— none —</option>
-          <option value="anger">anger</option>
-          <option value="amusement" selected>amusement</option>
-          <option value="contemplation">contemplation</option>
-          <option value="confusion">confusion</option>
-          <option value="enthusiasm">enthusiasm</option>
-          <option value="surprise">surprise</option>
-          <option value="sadness">sadness</option>
-        </select>
-      </div>
-      <div class="fld">
-        <label>Space</label>
+        <label style="margin-top:16px">Space</label>
         <select id="space">
           <option value="dry">dry (studio)</option>
           <option value="room" selected>room</option>
@@ -84,13 +88,13 @@
         </select>
       </div>
       <div class="fld">
-        <label>Speed · <span class="val" id="speedv">1.15×</span></label>
-        <input type="range" id="speed" min="0.8" max="1.6" step="0.05" value="1.15">
+        <label style="margin-top:16px">Speed · <span class="val" id="speedv">1.12×</span></label>
+        <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12">
       </div>
     </div>
 
     <div class="btns">
-      <button id="go">Speak</button>
+      <button class="go" id="go">Speak</button>
       <button class="ghost" id="dl" disabled>Download</button>
       <span class="status" id="status"></span>
     </div>
@@ -102,10 +106,39 @@
 
 <script>
 const $ = id => document.getElementById(id);
+// mirror of the server mode defaults, for responsive UI
+const MODES = {
+  bro:{d:"hyped, high-spirited — talking to his guy", speed:1.12, space:"room"},
+  deadpan:{d:"dry, deadpan mockery", speed:1.05, space:"room"},
+  smug:{d:"smug, gloating, victorious", speed:1.10, space:"room"},
+  pissed:{d:"protective, furious, loud", speed:1.05, space:"room"},
+  menace:{d:"quiet, ominous, dangerous", speed:1.00, space:"hall"},
+  panic:{d:"urgent, alarmed, combat", speed:1.10, space:"room"},
+  soft:{d:"reluctant, quietly sincere", speed:1.00, space:"room"},
+};
+let mode = "bro";
+const modesEl = $("modes");
+for(const k of Object.keys(MODES)){
+  const b = document.createElement("span");
+  b.className = "mode" + (k===mode?" on":""); b.textContent = k; b.dataset.m = k;
+  modesEl.appendChild(b);
+}
+function setMode(k){
+  mode = k;
+  [...modesEl.children].forEach(c => c.classList.toggle("on", c.dataset.m===k));
+  $("modedesc").textContent = MODES[k].d;
+  $("speed").value = MODES[k].speed; $("speedv").textContent = MODES[k].speed.toFixed(2)+"×";
+  $("space").value = MODES[k].space;
+}
+modesEl.onclick = e => { if(e.target.dataset.m) setMode(e.target.dataset.m); };
+setMode("bro");
+
 const speed = $("speed"), speedv = $("speedv");
 speed.oninput = () => speedv.textContent = (+speed.value).toFixed(2) + "×";
-
-$("chips").onclick = e => { if(e.target.dataset.t) $("text").value = e.target.dataset.t; };
+$("chips").onclick = e => {
+  const t = e.target.dataset.t; if(!t) return;
+  $("text").value = t; if(e.target.dataset.m) setMode(e.target.dataset.m);
+};
 
 let lastURL = null;
 async function speak(){
@@ -117,25 +150,21 @@ async function speak(){
   try{
     const r = await fetch("/say", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        text, speed:+speed.value, space:$("space").value, emotion:$("emotion").value
-      })
+      body: JSON.stringify({ text, mode, speed:+speed.value, space:$("space").value })
     });
     if(!r.ok) throw new Error("server "+r.status);
-    const hz = r.headers.get("X-Bag-Hz"), tries = r.headers.get("X-Bag-Tries");
+    const hz = r.headers.get("X-Bag-Hz"), drawls = r.headers.get("X-Bag-Drawls");
     const blob = await r.blob();
     if(lastURL) URL.revokeObjectURL(lastURL);
     lastURL = URL.createObjectURL(blob);
     const a = $("audio"); a.src = lastURL; a.style.display="block"; a.play();
     const secs = ((performance.now()-t0)/1000).toFixed(1);
     $("status").textContent = "done in " + secs + "s";
-    $("meta").textContent = "pitch " + hz + " Hz · seed tries [" + tries + "]";
+    $("meta").textContent = "pitch " + hz + " Hz" + (drawls ? " · drawls " + drawls : "");
     $("dl").disabled = false;
   }catch(err){
     $("status").textContent = "error: " + err.message;
-  }finally{
-    $("go").disabled = false;
-  }
+  }finally{ $("go").disabled = false; }
 }
 $("go").onclick = speak;
 $("text").addEventListener("keydown", e => {

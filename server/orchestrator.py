@@ -32,17 +32,71 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
+from server import elongation
+
 TTS_URL = os.environ.get("BAG_TTS_URL", "http://127.0.0.1:8010")
 REF = os.environ.get("BAG_REF", "/refs/bag_ref.wav")
 REF_TEXT = os.environ.get("BAG_REF_TEXT",
     "Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o to, prečo človek "
     "zomrie? Je to zlodej, čo vyzerá ako zlodej? Možno je to zlodej, a možno nie. "
     "To je na tom vtipné.")
-MALE_MAX_HZ = float(os.environ.get("BAG_MALE_MAX_HZ", "150"))
+MALE_MAX_HZ = float(os.environ.get("BAG_MALE_MAX_HZ", "155"))
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Bag")
+
+
+# ------------------------------------------------------------- delivery modes
+# Bag's registers, straight off the item card. Each is a stack of documented
+# control tokens that LEAD the turn (emotion / style / pitch / speed / expressive
+# are global-per-turn and must sit at the very start). `pitch_low` is in almost
+# every mode: it deepens him AND makes the voice-gate land male on the first try.
+# `pause` / `long_pause` are positional and get injected inline at his beats.
+#   speed = default atempo multiplier (fine control; the UI slider overrides it)
+#   space = default reverb preset
+#   beats = inject pause tokens at em-dashes / ellipses for comedic timing
+MODES = {
+    # talking to his bonded guy — hyped, high-spirited, fast. The default.
+    "bro":     {"lead": "<|emotion:enthusiasm|><|prosody:expressive_high|><|prosody:speed_fast|><|prosody:pitch_low|>",
+                "speed": 1.12, "space": "room", "beats": True,
+                "desc": "hyped, high-spirited, talking to his guy"},
+    # dry mockery, deadpan. Deliberately flat delivery, but loaded.
+    "deadpan": {"lead": "<|emotion:bitterness|><|prosody:expressive_low|><|prosody:pitch_low|>",
+                "speed": 1.05, "space": "room", "beats": True,
+                "desc": "dry, deadpan mockery"},
+    # gloating after saving the day — 'who saves the fucking day?'
+    "smug":    {"lead": "<|emotion:pride|><|prosody:expressive_high|><|prosody:pitch_low|>",
+                "speed": 1.10, "space": "room", "beats": True,
+                "desc": "smug, gloating, victorious"},
+    # protective fury — 'those aren't your fucking things'
+    "pissed":  {"lead": "<|emotion:anger|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_fast|>",
+                "speed": 1.05, "space": "room", "beats": False,
+                "desc": "protective, furious, loud"},
+    # the One Thing — quiet, ominous, slow. 'Not that one.'
+    "menace":  {"lead": "<|style:whispering|><|emotion:contemplation|><|prosody:pitch_low|><|prosody:speed_slow|>",
+                "speed": 1.00, "space": "hall", "beats": True,
+                "desc": "quiet, ominous, dangerous"},
+    # combat urgency / panic — fast, alarmed
+    "panic":   {"lead": "<|emotion:fear|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_fast|>",
+                "speed": 1.10, "space": "room", "beats": False,
+                "desc": "urgent, alarmed, combat"},
+    # rare reluctant softness under the insults — 'you owe me a fucking potion'
+    "soft":    {"lead": "<|emotion:affection|><|prosody:expressive_high|><|prosody:pitch_low|><|prosody:speed_slow|>",
+                "speed": 1.00, "space": "room", "beats": True,
+                "desc": "reluctant, quietly sincere"},
+}
+DEFAULT_MODE = "bro"
+
+
+def _beats(text: str) -> str:
+    """Turn Bag's written pauses into real ones. Em-dashes and ellipses are
+    where his comedic timing lives, so drop inline pause tokens there."""
+    for m in ("—", "–", " - "):
+        text = text.replace(m, " <|prosody:pause|> ")
+    for m in ("...", "…"):
+        text = text.replace(m, " <|prosody:pause|> ")
+    return text
 
 
 # ----------------------------------------------------------------- pitch gate
@@ -130,29 +184,57 @@ def _wav(pcm: bytes, sr: int) -> bytes:
 # --------------------------------------------------------------------- routes
 class SayReq(BaseModel):
     text: str
-    speed: float = 1.15
-    space: str = "room"
-    emotion: str = ""          # e.g. "anger", "amusement" -> inline token
+    mode: str = DEFAULT_MODE       # a delivery register from MODES
+    speed: float | None = None     # None -> use the mode's default
+    space: str | None = None       # None -> use the mode's default
+    emotion: str = ""              # optional extra emotion token, advanced
+
+
+@app.get("/modes")
+def modes():
+    return {"default": DEFAULT_MODE,
+            "modes": {k: v["desc"] for k, v in MODES.items()}}
 
 
 @app.post("/say")
 def say(req: SayReq):
-    text = req.text.strip()
-    if not text:
+    raw = req.text.strip()
+    if not raw:
         return Response(status_code=400, content="empty text")
+    m = MODES.get(req.mode, MODES[DEFAULT_MODE])
+    speed = req.speed if req.speed is not None else m["speed"]
+    space = req.space if req.space is not None else m["space"]
+
+    # pull the ** elongation markup out first — the model speaks the clean line
+    clean, aligner_words, marks = elongation.parse_marks(raw)
+
+    lead = m["lead"]
     if req.emotion:
-        text = f"<|emotion:{req.emotion}|> {text}"
+        lead = f"<|emotion:{req.emotion}|>" + lead
+    body = _beats(clean) if m["beats"] else clean
+    text = lead + body
+
     pcm, sr, meta = bag_voice(text)
-    wav = _process(pcm, sr, req.speed, req.space)
+    pcm, drawls = elongation.elongate(pcm, sr, aligner_words, marks)  # exact vowels
+    wav = _process(pcm, sr, speed, space)
     return Response(content=wav, media_type="audio/wav",
-                    headers={"X-Bag-Seed": str(meta.get("accepted_seed")),
+                    headers={"X-Bag-Mode": req.mode,
+                             "X-Bag-Seed": str(meta.get("accepted_seed")),
                              "X-Bag-Hz": str(meta.get("hz")),
+                             "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls),
                              "X-Bag-Tries": ",".join(map(str, meta.get("tries", [])))})
+
+
+@app.on_event("startup")
+def _warm():
+    elongation.load()          # pull the MMS aligner into memory once
 
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "tts": TTS_URL, "ref": REF}
+    return {"ok": True, "tts": TTS_URL, "ref": REF,
+            "elongation": elongation.load(),
+            "elongation_error": elongation._load_error}
 
 
 @app.get("/", response_class=HTMLResponse)
