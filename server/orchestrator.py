@@ -152,7 +152,7 @@ VOICES = {
                # cloned from a deliberate audiobook narrator: he inherits that
                # pace, so bias him faster with the model's own speed tokens
                "pace": {"default": "<|prosody:speed_fast|>",
-                        "fast": "<|prosody:speed_very_fast|>"},
+                        "fast": "<|prosody:speed_fast|>"},
                "persona": BAG_PERSONA, "persona_en": BAG_PERSONA_EN,
                "text": ("Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o "
                         "to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? "
@@ -449,7 +449,7 @@ def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4) -> bytes:
     af = ("silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.08,"
           "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,"
           f"areverse,silenceremove=stop_periods=-1:stop_duration={keep_pause + 0.1:.2f}"
-          f":stop_threshold=-40dB:stop_silence={keep_pause:.2f}")
+          f":stop_threshold=-45dB:stop_silence={keep_pause:.2f}")
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
            "-af", af, "-f", "s16le", "pipe:1"]
     return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
@@ -593,7 +593,7 @@ def _cue(sentence: str) -> float:
 
 
 def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
-                    lang: str = "sk", paces=None) -> tuple[bytes, list, list]:
+                    lang: str = "sk", paces=None, tempo_mult: float = 1.0) -> tuple[bytes, list, list]:
     """One generation, per-sentence pace: align once, measure each sentence's
     articulation rate (syllables over its own speech-only time, drawl holds
     excluded) and stretch just that sentence toward the mode target adjusted by
@@ -610,7 +610,7 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
     x = np.frombuffer(pcm, dtype=np.int16)
     holds = [(lbl, ms) for lbl, ms in applied if not lbl.endswith("|")]
     out, pos, idx, factors, rates = [], 0, 0, [], []
-    target_base = MODE_SPS.get(mode_key, 5.4) * (EN_RATE_SCALE if _is_en(lang) else 1.0)
+    target_base = MODE_SPS.get(mode_key, 5.4) * (EN_RATE_SCALE if _is_en(lang) else 1.0) * tempo_mult
     for si, (s, c) in enumerate(zip(sents, counts)):
         if c == 0:
             continue
@@ -670,35 +670,66 @@ def _place_tags(lead: str, clean: str) -> str:
     return lead + clean
 
 
+def _plan_parts(text: str, mode_key: str, modes=None) -> list:
+    """Split the line into parts: with per-sentence modes from the director,
+    consecutive sentences sharing a mode become one part (prosody continuity,
+    one TTS call); without, the usual length chunks under the single mode."""
+    sents = [x.strip() for x in _SENT.split(text) if x.strip()]
+    if not modes or len(modes) != len(sents):
+        return [(c, mode_key) for c in _chunks(text)]
+    groups, cur, curm = [], [], modes[0]
+    for x, mk in zip(sents, modes):
+        mk = mk if mk in MODES else mode_key
+        if mk != curm and cur:
+            groups.append((" ".join(cur), curm))
+            cur = []
+        cur.append(x)
+        curm = mk
+    if cur:
+        groups.append((" ".join(cur), curm))
+    out = []
+    for t, mk in groups:
+        for c in _chunks(t):
+            out.append((c, mk))
+    return out
+
+
 def _render(text: str, voice_key: str, mode_key: str,
             speed=None, space=None, emotion="", lang: str = "sk",
-            paces=None, song=False) -> tuple[bytes, dict, list]:
+            paces=None, song=False, tempo=None, modes=None) -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
     m = MODES.get(mode_key, MODES[DEFAULT_MODE])
     spc = space if space is not None else m["space"]
-    mlead = m["lead"]
-    pace = v.get("pace")
-    if pace:                                 # per-voice pace bias (slow narrator clones)
-        if "<|prosody:speed_fast|>" in mlead:
-            mlead = mlead.replace("<|prosody:speed_fast|>", pace["fast"])
-        elif "<|prosody:speed_" not in mlead:
-            mlead += pace["default"]
-    if song:
-        # documented singing style; speed and other style tokens fight it
-        mlead = "<|style:singing|>" + re.sub(r"<\|style:[^|]*\|>|<\|prosody:speed_[^|]*\|>", "", mlead)
-    lead = v["pitch"] + mlead                # voice sets timbre, mode sets delivery
-    if emotion:
-        lead = f"<|emotion:{emotion}|>" + lead
+    tempo = None if tempo is None else max(-2, min(2, int(tempo)))
+
+    def _lead_for(mk: str) -> str:
+        """Delivery tokens for one part: mode + voice pace bias + tempo dial +
+        song, all LEADING the turn (documented placement)."""
+        mm = MODES.get(mk, MODES[DEFAULT_MODE])
+        ml = mm["lead"]
+        pb = v.get("pace")
+        if pb:                                   # per-voice pace bias (slow narrator clones)
+            if "<|prosody:speed_fast|>" in ml:
+                ml = ml.replace("<|prosody:speed_fast|>", pb["fast"])
+            elif "<|prosody:speed_" not in ml:
+                ml += pb["default"]
+        if tempo is not None:                    # the dial overrides the mode's speed token
+            ml = re.sub(r"<\|prosody:speed_[^|]*\|>", "", ml) + TEMPO_TOKEN[tempo]
+        if song:                                 # documented singing style
+            ml = "<|style:singing|>" + re.sub(r"<\|style:[^|]*\|>|<\|prosody:speed_[^|]*\|>", "", ml)
+        l = v["pitch"] + ml
+        return f"<|emotion:{emotion}|>" + l if emotion else l
 
     # Long text renders sentence-by-sentence: each generation stays short and
     # stable and the model's runaway on long inputs is bounded. Markup (** and
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
     parts, drawls, meta, sr, factors, rates, seed_hint = [], [], {}, 24000, [], [], None
-    sent_off = 0
-    for chunk in _chunks(text):
+    sent_off, part_modes = 0, []
+    for chunk, part_mode in _plan_parts(text, mode_key, modes):
+        lead = _lead_for(part_mode)
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
             continue
@@ -710,7 +741,7 @@ def _render(text: str, voice_key: str, mode_key: str,
         cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, BEST_OF)
         lo, hi = v["band"]
         mid = (lo + hi) / 2
-        exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(mode_key, 5.4)
+        exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(part_mode, 5.4)
                                                  * (EN_RATE_SCALE if _is_en(lang) else 1.0))
 
         def _score(c):
@@ -738,17 +769,20 @@ def _render(text: str, voice_key: str, mode_key: str,
         if speed is None:
             # context-aware pacing: each sentence measured and stretched on its own
             n_s = len([x for x in _SENT.split(chunk) if x.strip()])
-            pcm, f, r = _pace_sentences(chunk, pcm, sr, mode_key, applied, lang,
-                                        (paces or [])[sent_off:sent_off + n_s])
+            pcm, f, r = _pace_sentences(chunk, pcm, sr, part_mode, applied, lang,
+                                        (paces or [])[sent_off:sent_off + n_s],
+                                        TEMPO_TARGET.get(tempo or 0, 1.0))
             sent_off += n_s
             factors += f
             rates += r
         parts.append(pcm)
+        part_modes.append(part_mode)
     if not parts:
         raise ValueError("nothing to say")
     meta["chunks"] = len(parts)
+    meta["parts"] = part_modes
     pcm = _trim((b"\x00\x00" * int(0.25 * sr)).join(parts), sr,
-                MODE_PAUSE.get(mode_key, 0.4))
+                MODE_PAUSE.get(mode_key, 0.4) * TEMPO_PAUSE.get(tempo or 0, 1.0))
 
     if speed is None:
         meta["adaptive_speed"] = round(float(np.mean(factors)), 2) if factors else 1.0
@@ -877,6 +911,8 @@ class SayReq(BaseModel):
     scene: str = ""                # DM scene context
     song: bool = False
     paces: list | None = None      # per-sentence slow/normal/fast
+    tempo: int | None = None       # voice-speed dial -2..2 (None = mode default)
+    modes: list | None = None      # per-sentence modes (director or client)
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
     lang: str = "sk"               # steers pace targets (EN runs ~15% slower)
@@ -887,6 +923,7 @@ class SayReq(BaseModel):
 
 class RespondReq(BaseModel):
     text: str
+    tempo: int | None = None
     direct: bool = False
     scene: str = ""
     song: bool = False
@@ -1007,25 +1044,31 @@ def say(req: SayReq):
     if not text:
         return Response(status_code=400, content="empty text")
     key = hashlib.sha1(json.dumps([text, req.voice, req.mode, req.lang, req.speed, req.space,
-                                   req.emotion, req.direct, req.scene, req.song, req.paces],
+                                   req.emotion, req.direct, req.scene, req.song, req.paces, req.tempo, req.modes],
                                   ensure_ascii=False).encode("utf-8")).hexdigest()
     hit = _CACHE.get(key)
     if hit:                                          # identical line: instant replay
         _CACHE.move_to_end(key)
         wav, meta, drawls, mode = hit
         return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "hit",
-                                                   "X-Bag-Paces": ",".join(meta.get("paces", []))})
-    mode, paces = req.mode, req.paces
-    if req.direct:                                   # the director picks mode + per-sentence pace
-        mode, paces = _direct(text, req.voice, req.lang, req.scene)
+                                                   "X-Bag-Paces": ",".join(meta.get("paces", [])),
+                                                   "X-Bag-Modes": ",".join(meta.get("modes", [])),
+                                                   "X-Bag-Tempo": meta.get("tempo", "")})
+    mode, paces, tempo, modes = req.mode, req.paces, req.tempo, req.modes
+    if req.direct:                                   # the director splits the line into parts
+        mode, paces, tempo, modes = _direct(text, req.voice, req.lang, req.scene)
     wav, meta, drawls = _render(text, req.voice, mode, req.speed, req.space, req.emotion,
-                                req.lang, paces=paces, song=req.song)
+                                req.lang, paces=paces, song=req.song, tempo=tempo, modes=modes)
     meta["paces"] = list(paces or [])
+    meta["modes"] = list(modes or [])
+    meta["tempo"] = "" if tempo is None else str(tempo)
     _CACHE[key] = (wav, meta, drawls, mode)
     while len(_CACHE) > _CACHE_MAX:
         _CACHE.popitem(last=False)
     return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "miss",
-                                               "X-Bag-Paces": ",".join(meta.get("paces", []))})
+                                               "X-Bag-Paces": ",".join(meta.get("paces", [])),
+                                               "X-Bag-Modes": ",".join(meta.get("modes", [])),
+                                               "X-Bag-Tempo": meta.get("tempo", "")})
 
 
 @app.post("/respond")
@@ -1036,11 +1079,11 @@ def respond(req: RespondReq):
         return Response(status_code=400, content="empty text")
     v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
     reply = _llm_reply(heard, _with_scene(_persona(v, req.lang), req.scene, req.lang), req.history)
-    mode, paces = req.mode, None
+    mode, paces, tempo, modes = req.mode, None, req.tempo, None
     if req.direct:
-        mode, paces = _direct(reply, req.voice, req.lang, req.scene)
+        mode, paces, tempo, modes = _direct(reply, req.voice, req.lang, req.scene)
     wav, meta, drawls = _render(reply, req.voice, mode, req.speed, req.space, lang=req.lang,
-                                paces=paces, song=req.song)
+                                paces=paces, song=req.song, tempo=tempo, modes=modes)
     return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Heard": quote(heard),
                                                "X-Bag-Reply": quote(reply)})
 
@@ -1068,6 +1111,13 @@ def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
 
 
 PACE_MULT = {"slow": 0.92, "normal": 1.0, "fast": 1.12}
+# voice-speed context dial, -2 (very slow) .. +2 (rushed): sets the model's own
+# speed token, scales the pace target and the pause cap. The director sets it
+# when auto delivery is on.
+TEMPO_TOKEN = {-2: "<|prosody:speed_very_slow|>", -1: "<|prosody:speed_slow|>", 0: "",
+               1: "<|prosody:speed_fast|>", 2: "<|prosody:speed_very_fast|>"}
+TEMPO_TARGET = {-2: 0.85, -1: 0.93, 0: 1.0, 1: 1.08, 2: 1.16}
+TEMPO_PAUSE = {-2: 1.5, -1: 1.2, 0: 1.0, 1: 0.8, 2: 0.65}
 DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "suché, bez emócií, ironické",
                      "smug": "samoľúby, chvastavý", "pissed": "nahnevaný, ochranársky, hlasný",
                      "menace": "tichý, výhražný šepot", "panic": "panika, boj, rýchle",
@@ -1088,25 +1138,41 @@ def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
     if _is_en(lang):
         sysm = ("You are the voice director for a D&D character voice. Choose ONE delivery mode "
                 "for the whole line from: " + ", ".join(f"{k} ({v['desc']})" for k, v in MODES.items())
-                + ". Then for EACH numbered sentence choose a pace: slow, normal or fast, from its "
-                "content and the scene. Reply ONLY with JSON: {\"mode\": \"...\", \"paces\": [\"fast\", ...]} "
-                "with exactly one pace per sentence.")
+                + ". For EACH numbered sentence choose its own mode (the delivery may change "
+                "across the line: a whisper can turn into a shout) and a pace: slow, normal or "
+                "fast, from its content and the scene; and an overall tempo for the line as an "
+                "integer from -2 (very slow, heavy) to 2 (rushed, breathless). Reply ONLY with "
+                "JSON: {\"sentences\": [{\"mode\": \"menace\", \"pace\": \"slow\"}, ...], \"tempo\": 0} "
+                "with exactly one entry per sentence.")
     else:
         sysm = ("Si hlasový režisér pre postavu z D&D. Vyber JEDEN spôsob podania celej repliky z: "
                 + ", ".join(f"{k} ({DIRECTOR_MODES_SK[k]})" for k in MODES)
-                + ". Potom pre KAŽDÚ očíslovanú vetu vyber tempo: slow, normal alebo fast, podľa "
-                "obsahu a scény. Odpovedz IBA JSON: {\"mode\": \"...\", \"paces\": [\"fast\", ...]} "
-                "— presne jedno tempo na vetu.")
+                + ". Pre KAŽDÚ očíslovanú vetu vyber jej vlastný spôsob podania (podanie sa môže "
+                "počas repliky meniť: šepot môže prejsť do kriku) a tempo: slow, normal alebo fast, "
+                "podľa obsahu a scény; a celkové tempo celej repliky ako celé číslo od -2 (veľmi "
+                "pomaly, ťažko) po 2 (rýchlo, bez dychu). Odpovedz IBA JSON: "
+                "{\"sentences\": [{\"mode\": \"menace\", \"pace\": \"slow\"}, ...], \"tempo\": 0} "
+                "— presne jeden záznam na vetu.")
     sysm = _with_scene(sysm, scene, lang)
     user = "\n".join(f"{i + 1}. {x}" for i, x in enumerate(sents)) or text
     try:
-        d = json.loads(_llm_reply(user, sysm, None, temperature=0.2, num_predict=160, json_mode=True))
-        mode = d.get("mode") if d.get("mode") in MODES else DEFAULT_MODE
-        paces = [p if p in PACE_MULT else "normal" for p in (d.get("paces") or [])][:len(sents)]
+        d = json.loads(_llm_reply(user, sysm, None, temperature=0.2, num_predict=320, json_mode=True))
+        rows = d.get("sentences") or []
+        modes = [(r.get("mode") if isinstance(r, dict) and r.get("mode") in MODES else None) for r in rows][:len(sents)]
+        paces = [(r.get("pace") if isinstance(r, dict) and r.get("pace") in PACE_MULT else "normal") for r in rows][:len(sents)]
+        if d.get("mode") in MODES and not any(modes):   # old-style answer: one mode
+            modes = [d["mode"]] * len(sents)
+        fill = next((m for m in modes if m), DEFAULT_MODE)
+        modes = [m or fill for m in modes] + [fill] * (len(sents) - len(modes))
         paces += ["normal"] * (len(sents) - len(paces))
-        return mode, paces
+        mode = max(set(modes), key=modes.count) if modes else DEFAULT_MODE
+        try:
+            tempo = max(-2, min(2, int(d.get("tempo", 0))))
+        except Exception:                               # noqa: BLE001
+            tempo = 0
+        return mode, paces, tempo, modes
     except Exception:                                   # noqa: BLE001
-        return DEFAULT_MODE, ["normal"] * len(sents)
+        return DEFAULT_MODE, ["normal"] * len(sents), 0, [DEFAULT_MODE] * len(sents)
 
 
 def _improv_line(voice_key: str, kind: str, lang: str, scene: str = "") -> str:

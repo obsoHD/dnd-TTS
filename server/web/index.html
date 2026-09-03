@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voice Forge</title>
 <style>
-  :root{--bg:#1a1613;--panel:#26201b;--edge:#3a3029;--ink:#efe6d8;--muted:#a89a86;--accent:#c9962f;--accent2:#8a5a2b;--rec:#c0472f}
+  :root{--bg:#1a1613;--panel:#26201b;--panel2:#1f1a16;--edge:#3a3029;--ink:#efe6d8;--muted:#a89a86;--accent:#c9962f;--accent2:#8a5a2b;--rec:#c0472f;--blue:#5b8fb9}
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);color:var(--ink);
        font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;display:flex;justify-content:center;padding:28px 16px}
-  .wrap{width:100%;max-width:1160px}
+  .wrap{width:100%;max-width:1200px}
   h1{font-size:30px;margin:0 0 2px;letter-spacing:.5px}
   h1 .em{color:var(--accent)}
   .sub{color:var(--muted);margin:0 0 18px;font-style:italic;font-size:15px}
   .layout{display:flex;gap:18px;align-items:flex-start}
   .side{width:230px;flex:none;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  .side h2{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  .side h2,.sec h2{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
   .voice{position:relative;display:block;width:100%;text-align:left;background:#2c2620;border:1px solid var(--edge);color:var(--ink);
          border-radius:11px;padding:11px 13px;margin-bottom:8px;cursor:pointer;font:600 15px/1.25 inherit;transition:.12s}
   .voice:hover{border-color:var(--accent2)}
@@ -25,58 +25,65 @@
   .voice.add{border-style:dashed;color:var(--muted);font-weight:400}
   .voice .del{position:absolute;right:9px;top:7px;font-size:14px;color:var(--muted);padding:2px 5px;border-radius:6px}
   .voice .del:hover{color:#ffd9cf;background:rgba(192,71,47,.25)}
-  .card{flex:1;min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
-  label:first-child{margin-top:0}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+  .sec{background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  .sec h2 .n{display:inline-block;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#1a130a;text-align:center;line-height:20px;font-size:12px;margin-right:8px}
+  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:12px 0 8px}
   .pills{display:flex;gap:8px;flex-wrap:wrap}
   .pill{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;padding:8px 13px;font-size:14px;cursor:pointer;transition:.12s}
   .pill:hover{border-color:var(--accent2)}
   .pill.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;border-color:var(--accent);font-weight:600}
   .modedesc{font-size:12.5px;color:var(--muted);font-style:italic;min-height:16px;margin:8px 2px 0}
-  .toggles{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:14px;color:var(--muted)}
-  .toggles label{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:14px;letter-spacing:0;text-transform:none;color:var(--ink);cursor:pointer}
-  textarea{width:100%;resize:vertical;background:#1c1713;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit;margin-top:6px}
+  .inline{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .chk{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--ink);cursor:pointer}
+  textarea{width:100%;resize:vertical;background:#1c1713;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit;margin-top:2px}
   textarea:focus{outline:none;border-color:var(--accent)}
-  #scene{min-height:52px;font-size:14.5px}
-  #text{min-height:84px}
+  #scene{min-height:48px;font-size:14.5px}
+  #text{min-height:88px;font-size:17px}
   .hint{font-size:12.5px;color:var(--muted);margin:8px 2px 0}
   .hint code{background:#1c1713;border:1px solid var(--edge);border-radius:5px;padding:1px 6px;color:var(--accent);font-family:ui-monospace,monospace}
-  .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}
-  .fld{flex:1;min-width:150px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .box{background:var(--panel2);border:1px solid var(--edge);border-radius:12px;padding:14px 16px}
+  .box h3{margin:0 0 4px;font-size:15px}
+  .box p{margin:0 0 8px;font-size:13px;color:var(--muted)}
   select,input[type=range],input[type=text]{width:100%}
   select,input[type=text]{background:#1c1713;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:8px 10px;font:inherit}
   input[type=range]{accent-color:var(--accent)}
   .val{color:var(--accent);font-variant-numeric:tabular-nums}
-  .btns{display:flex;gap:12px;margin-top:20px;align-items:center;flex-wrap:wrap}
+  .btns{display:flex;gap:12px;margin-top:14px;align-items:center;flex-wrap:wrap}
   button{border:0;border-radius:10px;padding:12px 20px;font:600 15px/1 inherit;cursor:pointer}
   .go{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a}
+  .dir{background:linear-gradient(180deg,#6fa2cc,#3f6f94);color:#0d1a26}
   .ghost{background:#2c2620;color:var(--ink);border:1px solid var(--edge);font-weight:400}
   button:disabled{opacity:.5;cursor:default}
   .status{color:var(--muted);font-size:13px;min-height:18px}
-  audio{width:100%;margin-top:16px;display:none}
-  .meta{margin-top:10px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
+  audio{width:100%;margin-top:12px;display:none}
+  .meta{margin-top:8px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
+  .breakdown{margin-top:10px;display:none;border:1px solid var(--edge);border-radius:10px;overflow:hidden}
+  .breakdown div{display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:7px 12px;font-size:14px;border-top:1px solid var(--edge)}
+  .breakdown div:first-child{border-top:0;background:#1c1713;color:var(--muted);font-size:12px;letter-spacing:.6px;text-transform:uppercase}
+  .breakdown .m{color:var(--blue);font-weight:600}
+  .breakdown .pc{color:var(--muted)}
   .board .ph{display:block;width:100%;text-align:left;background:#221d18;border:1px dashed var(--edge);color:var(--ink);border-radius:9px;padding:9px 12px;margin-bottom:7px;cursor:pointer;font:14px/1.3 inherit;transition:.12s}
   .board .ph:hover{border-color:var(--accent);border-style:solid}
   .board .ph:disabled{opacity:.5;cursor:default}
-  /* voice creator */
   .modal[hidden]{display:none}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:10}
   .dlg{width:100%;max-width:560px;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.6);max-height:92vh;overflow:auto}
   .dlg h2{margin:0 0 4px;font-size:22px}
-  .dlg .sub{margin-bottom:12px}
   .drop{margin-top:6px;border:2px dashed var(--edge);border-radius:12px;padding:18px;text-align:center;color:var(--muted);cursor:pointer;font-size:14px}
   .drop.over{border-color:var(--accent);color:var(--ink)}
   .drop.has{border-style:solid;border-color:var(--accent2);color:var(--ink)}
   .result{margin-top:14px;background:#1c1713;border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font-size:14px}
   .result b{color:var(--accent)}
   .result p{margin:6px 0}
-  @media (max-width:820px){.layout{flex-direction:column}.side{width:100%}}
+  @media (max-width:900px){.layout{flex-direction:column}.side{width:100%}.grid2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1><span class="em">Voice</span> Forge</h1>
-  <p class="sub">Pick a voice. Type the line. It speaks.</p>
+  <p class="sub">Pick a voice. Write the line. Speak it now, or let the director shape it.</p>
 
   <div class="layout">
     <aside class="side">
@@ -84,56 +91,74 @@
       <div id="voices"></div>
     </aside>
 
-    <div class="card">
-      <label>Language</label>
-      <div class="pills" id="langs">
-        <span class="pill on" data-l="sk">SK</span>
-        <span class="pill" data-l="en">EN</span>
-      </div>
-
-      <label>Delivery</label>
-      <div class="pills" id="modes"></div>
-      <div class="modedesc" id="modedesc"></div>
-      <div class="toggles">
-        <label><input type="checkbox" id="direct"> Auto delivery — the director picks the mode and per-sentence pace</label>
-        <label><input type="checkbox" id="song"> Song mode</label>
-      </div>
-
-      <label>Scene — what's happening (steers phrases, answers and the director)</label>
-      <textarea id="scene" placeholder="napr. v goblinej jaskyni, tulák práve zlyhal na nenápadnosti…"></textarea>
-
-      <label>Text</label>
-      <textarea id="text" placeholder="Napíš…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
-      <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code> (a natural short pause); <code>...</code> or two TABs = a long one. Speed <b>auto</b> = the delivery's natural pace. <b>Fix text</b> cleans typos and keeps your marks.</div>
-
-      <div class="row">
-        <div class="fld">
-          <label>Room</label>
-          <select id="space">
-            <option value="dry">dry (studio)</option>
-            <option value="room" selected>room</option>
-            <option value="hall">hall (big)</option>
-            <option value="bag">inside the bag</option>
-          </select>
+    <div class="main">
+      <section class="sec">
+        <h2><span class="n">1</span>Line</h2>
+        <div class="inline">
+          <div class="pills" id="langs">
+            <span class="pill on" data-l="sk">SK</span>
+            <span class="pill" data-l="en">EN</span>
+          </div>
+          <label class="chk" style="margin:0"><input type="checkbox" id="song"> Song mode</label>
         </div>
-        <div class="fld">
-          <label style="display:flex;justify-content:space-between;align-items:center">
-            <span>Speed · <span class="val" id="speedv">auto</span></span>
-            <span style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" id="autospeed" checked> auto</span>
-          </label>
-          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.0">
+        <label>Scene — what's happening (steers phrases, answers and the director)</label>
+        <textarea id="scene" placeholder="napr. v goblinej jaskyni, tulák práve zlyhal na nenápadnosti…"></textarea>
+        <label>Text</label>
+        <textarea id="text" placeholder="Napíš…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
+        <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code>; <code>...</code> or two TABs = a long one. <b>Fix text</b> cleans typos and keeps your marks.</div>
+      </section>
+
+      <section class="sec">
+        <h2><span class="n">2</span>Delivery</h2>
+        <div class="grid2">
+          <div class="box">
+            <h3>Manual — Speak now</h3>
+            <p>Instant. Uses exactly what you set here; no LLM involved.</p>
+            <label>Mode</label>
+            <div class="pills" id="modes"></div>
+            <div class="modedesc" id="modedesc"></div>
+            <label style="display:flex;justify-content:space-between;align-items:center">
+              <span>Voice speed (context) · <span class="val" id="tempov">mode default</span></span>
+              <span class="chk" style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="tempoauto" checked> default</span>
+            </label>
+            <input type="range" id="tempo" min="-2" max="2" step="1" value="0">
+            <div class="hint" style="margin-top:2px">very slow · slow · normal · brisk · rushed — sets the model's own speed, the pace target and pause length.</div>
+          </div>
+          <div class="box">
+            <h3>Directed — Direct &amp; speak</h3>
+            <p>The director reads the line and the scene, splits it into parts, and gives each part its own mode and pace plus an overall speed. ~2 s extra.</p>
+            <div class="breakdown" id="breakdown"></div>
+            <div class="hint" id="dirhint">The breakdown appears here after a directed take.</div>
+          </div>
         </div>
-      </div>
-
-      <div class="btns">
-        <button class="go" id="go">Speak</button>
-        <button class="ghost" id="fix">Fix text</button>
-        <button class="ghost" id="dl" disabled>Download</button>
-        <span class="status" id="status"></span>
-      </div>
-
-      <audio id="audio" controls></audio>
-      <div class="meta" id="meta"></div>
+        <div class="grid2" style="margin-top:14px">
+          <div>
+            <label>Room</label>
+            <select id="space">
+              <option value="dry">dry (studio)</option>
+              <option value="room" selected>room</option>
+              <option value="hall">hall (big)</option>
+              <option value="bag">inside the bag</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:flex;justify-content:space-between;align-items:center">
+              <span>Fine speed · <span class="val" id="speedv">auto</span></span>
+              <span class="chk" style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="autospeed" checked> auto</span>
+            </label>
+            <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.0">
+          </div>
+        </div>
+        <div class="btns">
+          <button class="go" id="go">Speak now</button>
+          <button class="dir" id="direct">Direct &amp; speak</button>
+          <button class="ghost" id="fix">Fix text</button>
+          <button class="ghost" id="dl" disabled>Download</button>
+          <span class="status" id="status"></span>
+        </div>
+        <audio id="audio" controls></audio>
+        <div class="meta" id="meta"></div>
+      </section>
     </div>
 
     <aside class="side board">
@@ -176,25 +201,36 @@ const esc = s => String(s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",
 const MODEDESC = {bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery", smug:"smug, gloating, victorious",
   pissed:"protective, furious, loud", menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat", soft:"reluctant, quietly sincere"};
 const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
+const TEMPO_NAMES = {"-2":"very slow","-1":"slow","0":"normal","1":"brisk","2":"rushed"};
+const SENT_SPLIT = /(?<=[.!?…])\s+/;
 
 let voice = "bag", mode = "bro", lang = "sk", lastURL = null;
 const prefs = (() => { try { return JSON.parse(localStorage.getItem("bagprefs") || "{}"); } catch (e) { return {}; } })();
-function savePrefs(){ try { localStorage.setItem("bagprefs", JSON.stringify({direct:$("direct").checked, song:$("song").checked, scene:$("scene").value})); } catch (e) {} }
-$("direct").checked = !!prefs.direct; $("song").checked = !!prefs.song; $("scene").value = prefs.scene || "";
-["direct","song"].forEach(id => $(id).onchange = savePrefs);
-$("scene").addEventListener("input", savePrefs);
+function savePrefs(){ try { localStorage.setItem("bagprefs", JSON.stringify({song:$("song").checked, scene:$("scene").value})); } catch (e) {} }
+$("song").checked = !!prefs.song; $("scene").value = prefs.scene || "";
+$("song").onchange = savePrefs; $("scene").addEventListener("input", savePrefs);
 
 // language
 $("langs").onclick = e => { if(!e.target.dataset.l) return; lang = e.target.dataset.l;
   [...$("langs").children].forEach(c => c.classList.toggle("on", c.dataset.l === lang)); loadPhrases(); };
 
-// modes
+// modes (manual)
 const modesEl = $("modes");
 for (const k of Object.keys(MODEDESC)) { const b = document.createElement("span"); b.className = "pill" + (k===mode?" on":""); b.textContent = k; b.dataset.m = k; modesEl.appendChild(b); }
 function showMode(k){ [...modesEl.children].forEach(c => c.classList.toggle("on", c.dataset.m === k)); $("modedesc").textContent = MODEDESC[k] || ""; }
 function setMode(k){ mode = k; showMode(k); $("space").value = MODESPACE[k] || "room"; }
 modesEl.onclick = e => { if(e.target.dataset.m) setMode(e.target.dataset.m); };
 setMode("bro");
+
+// tempo dial
+function showTempo(){ $("tempov").textContent = $("tempoauto").checked ? "mode default" : (TEMPO_NAMES[$("tempo").value] || $("tempo").value); }
+$("tempo").oninput = () => { $("tempoauto").checked = false; showTempo(); };
+$("tempoauto").onchange = showTempo;
+showTempo();
+
+// fine speed
+$("speed").oninput = () => { $("autospeed").checked = false; $("speedv").textContent = (+$("speed").value).toFixed(2) + "×"; };
+$("autospeed").onchange = () => { $("speedv").textContent = $("autospeed").checked ? "auto" : (+$("speed").value).toFixed(2) + "×"; };
 
 // voices
 async function loadVoices(select){
@@ -232,34 +268,41 @@ $("phrases").onclick = async e => {
     if (!r.ok) throw new Error("server " + r.status);
     const d = await r.json();
     $("text").value = d.text || ""; $("text").focus();
-    $("status").textContent = (d.source === "bank" ? "curated line ready" : "improvised line ready") + " — read it, then press Speak";
+    $("status").textContent = (d.source === "bank" ? "curated line ready" : "improvised line ready") + " — Speak now, or Direct & speak";
   } catch (err) { $("status").textContent = "error: " + err.message; }
   finally { [...$("phrases").children].forEach(c => c.disabled = false); }
 };
 
-// speed
-$("speed").oninput = () => { $("autospeed").checked = false; $("speedv").textContent = (+$("speed").value).toFixed(2) + "×"; };
-$("autospeed").onchange = () => { $("speedv").textContent = $("autospeed").checked ? "auto" : (+$("speed").value).toFixed(2) + "×"; };
-
 function play(blob){ if (lastURL) URL.revokeObjectURL(lastURL); lastURL = URL.createObjectURL(blob);
   const a = $("audio"); a.src = lastURL; a.style.display = "block"; a.play().catch(() => {}); $("dl").disabled = false; }
-function busy(b, msg){ ["go","fix","dl"].forEach(id => $(id).disabled = b); if (msg !== undefined) $("status").textContent = msg; }
+function busy(b, msg){ ["go","direct","fix","dl"].forEach(id => $(id).disabled = b); if (msg !== undefined) $("status").textContent = msg; }
 
-async function speak(){
+function showBreakdown(text, modes, paces, tempo){
+  const sents = text.split(SENT_SPLIT).filter(s => s.trim());
+  const ms = (modes||"").split(",").filter(Boolean), ps = (paces||"").split(",").filter(Boolean);
+  if (!ms.length) { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; return; }
+  let html = `<div><span>part</span><span>mode</span><span>pace</span></div>`;
+  sents.forEach((s, i) => { html += `<div><span>${esc(s)}</span><span class="m">${esc(ms[i]||"")}</span><span class="pc">${esc(ps[i]||"")}</span></div>`; });
+  if (tempo !== null && tempo !== "") html += `<div><span>overall speed</span><span class="m">${esc(TEMPO_NAMES[tempo]||tempo)}</span><span></span></div>`;
+  $("breakdown").innerHTML = html; $("breakdown").style.display = "block"; $("dirhint").style.display = "none";
+}
+
+async function speak(directed){
   const text = $("text").value.trim(); if (!text) { $("status").textContent = "…say something."; return; }
-  busy(true, $("direct").checked ? "director is reading the line…" : "thinking…"); const t0 = performance.now();
+  busy(true, directed ? "director is splitting the line…" : "speaking…"); const t0 = performance.now();
   try {
-    const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({text, voice, mode, lang, direct: $("direct").checked, scene: $("scene").value, song: $("song").checked,
-        speed: $("autospeed").checked ? null : +$("speed").value, space: $("space").value})});
+    const body = {text, voice, mode, lang, direct: !!directed, scene: $("scene").value, song: $("song").checked,
+      speed: $("autospeed").checked ? null : +$("speed").value, space: $("space").value,
+      tempo: (directed || $("tempoauto").checked) ? null : +$("tempo").value};
+    const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     if (!r.ok) throw new Error("server " + r.status);
     const hz = r.headers.get("X-Bag-Hz"), sp = r.headers.get("X-Bag-Speed"), chosen = r.headers.get("X-Bag-Mode"),
-          paces = r.headers.get("X-Bag-Paces"), drawls = r.headers.get("X-Bag-Drawls");
-    if ($("direct").checked && chosen && MODEDESC[chosen]) showMode(chosen);
+          paces = r.headers.get("X-Bag-Paces"), modes = r.headers.get("X-Bag-Modes"), tempo = r.headers.get("X-Bag-Tempo"), drawls = r.headers.get("X-Bag-Drawls");
+    if (directed) showBreakdown(text, modes, paces, tempo); else { $("breakdown").style.display = "none"; $("dirhint").style.display = "block"; }
     play(await r.blob());
-    $("status").textContent = "done in " + ((performance.now()-t0)/1000).toFixed(1) + "s";
-    $("meta").textContent = "pitch " + hz + " Hz" + (sp ? " · speed " + sp + "×" : "") + (chosen && $("direct").checked ? " · director: " + chosen : "")
-      + (paces ? " · pace " + paces : "") + (drawls ? " · marks " + drawls : "");
+    $("status").textContent = (directed ? "directed take" : "instant take") + " · " + ((performance.now()-t0)/1000).toFixed(1) + "s";
+    $("meta").textContent = "pitch " + hz + " Hz" + (sp ? " · speed " + sp + "×" : "") + (chosen && directed ? " · mode " + chosen : "")
+      + (tempo ? " · tempo " + (TEMPO_NAMES[tempo]||tempo) : "") + (drawls ? " · marks " + drawls : "");
   } catch (err) { $("status").textContent = "error: " + err.message; }
   finally { busy(false); }
 }
@@ -272,9 +315,9 @@ async function fixText(){
   } catch (err) { $("status").textContent = "error: " + err.message; }
   finally { busy(false); }
 }
-$("go").onclick = speak; $("fix").onclick = fixText;
+$("go").onclick = () => speak(false); $("direct").onclick = () => speak(true); $("fix").onclick = fixText;
 $("dl").onclick = () => { if (!lastURL) return; const a = document.createElement("a"); a.href = lastURL; a.download = "voice.wav"; a.click(); };
-$("text").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") speak(); });
+$("text").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") speak(e.shiftKey); });
 
 // ---- voice creator ----
 let cfileBlob = null;
@@ -283,19 +326,18 @@ $("cclose").onclick = () => { $("creator").hidden = true; };
 document.addEventListener("keydown", e => { if (e.key === "Escape") $("creator").hidden = true; });
 $("creator").addEventListener("click", e => { if (e.target === $("creator")) $("creator").hidden = true; });
 $("drop").onclick = () => $("cfile").click();
-$("cfile").onchange = () => { const f = $("cfile").files[0]; if (f) { cfileBlob = f; $("drop").textContent = f.name + " (" + Math.round(f.size/1024) + " KB)"; $("drop").classList.add("has"); } };
+function setClip(f){ cfileBlob = f; $("drop").textContent = f.name + " (" + Math.round(f.size/1024) + " KB)"; $("drop").classList.add("has"); }
+$("cfile").onchange = () => { const f = $("cfile").files[0]; if (f) setClip(f); };
 $("drop").addEventListener("dragover", e => { e.preventDefault(); $("drop").classList.add("over"); });
 $("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
-$("drop").addEventListener("drop", e => { e.preventDefault(); $("drop").classList.remove("over");
-  const f = e.dataTransfer.files[0]; if (f) { cfileBlob = f; $("drop").textContent = f.name + " (" + Math.round(f.size/1024) + " KB)"; $("drop").classList.add("has"); } });
+$("drop").addEventListener("drop", e => { e.preventDefault(); $("drop").classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) setClip(f); });
 $("ccreate").onclick = async () => {
   const name = $("cname").value.trim(); if (!name) { $("cstatus").textContent = "give it a name"; return; }
   if (!cfileBlob) { $("cstatus").textContent = "drop a recording first"; return; }
   $("ccreate").disabled = true; $("cstatus").textContent = "listening to the clip, writing the personality… (~20 s)";
   try {
     const fd = new FormData(); fd.append("audio", cfileBlob, cfileBlob.name || "clip.webm");
-    fd.append("name", name); fd.append("context", $("ccontext").value); fd.append("lang", lang);
-    fd.append("pitch", $("cpitch").value);
+    fd.append("name", name); fd.append("context", $("ccontext").value); fd.append("lang", lang); fd.append("pitch", $("cpitch").value);
     const r = await fetch("/voices/create", {method:"POST", body: fd});
     const d = await r.json();
     if (!r.ok || d.error) throw new Error(d.error || ("server " + r.status));
