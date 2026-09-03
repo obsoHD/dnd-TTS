@@ -25,6 +25,7 @@ import difflib
 import hashlib
 import json
 import os
+import random
 import re
 import struct
 import subprocess
@@ -191,6 +192,26 @@ NPC_PHRASE_TYPES = {"sk": ["Pozdrav", "Varovanie", "Klebeta z mesta", "Ponuka ú
                            "Tavern talk", "Farewell"]}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Curated phrase bank: natively written lines per character x type, each
+# approved by two independent judges (grammar, type-fit, character). The board
+# serves these first — instant and reliable; the LLM improvises only as a
+# fallback, seeded with bank lines as examples. {"sk": {"bag": {type: [..]}}}
+PHRASES_PATH = os.path.join(HERE, "phrases.json")
+try:
+    with open(PHRASES_PATH, encoding="utf-8") as _f:
+        PHRASE_BANK = json.load(_f)
+except Exception:                                   # noqa: BLE001
+    PHRASE_BANK = {"sk": {}, "en": {}}
+BANK_KEY = {"bag": "bag", "shopkeep": "shopkeep", "male": "npc", "female": "npc"}
+_last_served: dict = {}
+
+
+def _bank_lines(voice_key: str, kind: str, lang: str) -> list:
+    bank = PHRASE_BANK.get("en" if _is_en(lang) else "sk", {})
+    return list(bank.get(BANK_KEY.get(voice_key, "npc"), {}).get(kind, []))
+
+
 app = FastAPI(title="Bag")
 
 
@@ -857,16 +878,24 @@ def _improv_line(voice_key: str, kind: str, lang: str) -> str:
     the model asked to place one or two natural short pauses as em dashes —
     those become short deterministic silences downstream."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
+    # few-shot from the curated bank: this type if we have it, else the voice's
+    # other lines — the model copies the register far better than a label
+    shots = _bank_lines(voice_key, kind, lang)[:3]
+    if not shots:
+        pool = PHRASE_BANK.get("en" if _is_en(lang) else "sk", {}).get(BANK_KEY.get(voice_key, "npc"), {})
+        shots = [ls[0] for ls in pool.values() if ls][:3]
     if _is_en(lang):
+        ex = (" Examples of the tone (write a NEW one, do not copy): " + " | ".join(shots)) if shots else ""
         prompt = (f"Say ONE short line. Situation or type: {kind or 'a line'}. "
                   f"Reply with ONLY the line, one or two sentences, in character, "
                   f"no quotes. Put one or two natural short pauses as an em dash (—) "
-                  f"where the character would hesitate or breathe. English only.")
+                  f"where the character would hesitate or breathe. English only.{ex}")
     else:
+        ex = (" Príklady tónu (napíš NOVÚ, nekopíruj): " + " | ".join(shots)) if shots else ""
         prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind or 'replika'}. "
                   f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
                   f"Vlož jednu až dve prirodzené krátke pauzy ako pomlčku (—) tam, "
-                  f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.")
+                  f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.{ex}")
     text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.8, num_predict=90)
     text = text.strip().strip('"').split("\n")[0].strip()
     if text and not _is_en(lang):
@@ -883,9 +912,18 @@ def _improv_line(voice_key: str, kind: str, lang: str) -> str:
 
 @app.post("/linetext")
 def linetext(req: LineReq):
-    """Click a phrase-type -> the LLM improvises a line. TEXT ONLY, so it lands in
-    the box to read; the user triggers Speak themselves."""
-    return {"text": _improv_line(req.voice, (req.type or "").strip(), req.lang)}
+    """Click a phrase-type -> a line lands in the box to read; the user triggers
+    Speak. Curated bank first (random, never the same line twice in a row);
+    LLM improv only when the bank has nothing for this type."""
+    kind = (req.type or "").strip()
+    lines = _bank_lines(req.voice, kind, req.lang)
+    if len(lines) >= 2:
+        key = (req.voice, kind, req.lang)
+        pool = [l for l in lines if l != _last_served.get(key)] or lines
+        line = random.choice(pool)
+        _last_served[key] = line
+        return {"text": line, "source": "bank"}
+    return {"text": _improv_line(req.voice, kind, req.lang), "source": "improv"}
 
 
 @app.post("/line")

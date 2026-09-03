@@ -199,7 +199,7 @@ $("phrases").onclick=async e=>{
     if(!r.ok) throw new Error("server "+r.status);
     const d=await r.json();
     $("text").value=d.text||""; $("text").focus();
-    $("status").textContent="line ready — read it, then press Speak";
+    $("status").textContent=(d.source==="bank"?"curated line ready":"improvised line ready")+" — read it, then press Speak";
   }catch(err){ $("status").textContent="error: "+err.message; }
   finally{ [...$("phrases").children].forEach(c=>c.disabled=false); }
 };
