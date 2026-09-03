@@ -32,7 +32,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import store, ws
+from app import config, store, ws
 from app.api import health, renders
 from app.api import voices as voices_api
 from app.ws import Hub
@@ -113,10 +113,30 @@ def _enqueue_prerender(app: FastAPI, peers: Peers) -> int:
     return queued
 
 
+SEEDED_BANK = Path(__file__).resolve().parent.parent / "data" / "phrases.json"
+
+
+def _seed_bank() -> None:
+    """Copy the shipped phrase bank into the data volume once.
+
+    WHY once: the file in DATA_DIR is the operator's copy (editable, backed up
+    with the renders); the one next to the code is only the shipped default, so
+    re-copying on every boot would silently discard their edits. Missing on both
+    sides is not fatal: import_bank reports zero lines and the app still serves.
+    """
+    live = config.DATA_DIR / "phrases.json"
+    if live.exists() or not SEEDED_BANK.exists() or live == SEEDED_BANK:
+        return
+    live.parent.mkdir(parents=True, exist_ok=True)
+    live.write_bytes(SEEDED_BANK.read_bytes())
+    log.info("seeded %s from the image", live)
+
+
 async def _startup(app: FastAPI, peers: Peers) -> None:
     store.init_db()
     _migrate(peers.jobs)
     _migrate(peers.board)
+    _seed_bank()
     bank = peers.board.import_bank()
     app.state.voices = voices_api.load_all()
     hub = Hub()
