@@ -1,0 +1,47 @@
+# The whole Bag stack, restart-on-boot.
+#   cd ~/dnd-tts && docker compose -f docker/compose.yml up -d --build
+# tts  = Higgs Audio v3 on GPU 1, host :8010 (the TTS may only read reference
+#        clips under /refs — user-created voices live in /refs/user)
+# orch = orchestrator + UI on host :8020 (host networking: it talks to the TTS,
+#        ollama, whisper and the lifeos broker on localhost)
+name: bag
+services:
+  tts:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: bag-tts:local
+    container_name: bag-tts
+    restart: unless-stopped
+    ports: ["8010:8000"]
+    volumes:
+      - ${HOME}/dnd-tts/models/higgs-v3:/model:ro
+      - ${HOME}/dnd-tts/refs:/refs:ro
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+      - SGLANG_OMNI_HIGGS_REF_CODE_CACHE=1   # cache reference-clip codes across calls
+    command: ["serve", "--model-path", "/model", "--allowed-local-media-path", "/refs",
+              "--host", "0.0.0.0", "--port", "8000"]
+    shm_size: 16g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  orch:
+    build:
+      context: ..
+      dockerfile: docker/orchestrator.Dockerfile
+    image: bag-orchestrator
+    container_name: bag-orch
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${HOME}/dnd-tts/refs:/refs          # rw: the Voice Creator writes clips here
+      - ${HOME}/dnd-tts/cache:/cache
+    environment:
+      - BAG_TTS_URL=http://127.0.0.1:8010
+      - BAG_REF=/refs/bag_ref.wav
+    depends_on: [tts]

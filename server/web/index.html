@@ -5,62 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voice Forge</title>
 <style>
-  :root{
-    --bg:#1a1613; --panel:#26201b; --edge:#3a3029; --ink:#efe6d8;
-    --muted:#a89a86; --accent:#c9962f; --accent2:#8a5a2b; --ok:#7fa860;
-  }
+  :root{--bg:#1a1613;--panel:#26201b;--edge:#3a3029;--ink:#efe6d8;--muted:#a89a86;--accent:#c9962f;--accent2:#8a5a2b;--rec:#c0472f}
   *{box-sizing:border-box}
-  body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);
-       color:var(--ink);font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;
-       display:flex;justify-content:center;padding:28px 16px}
-  .wrap{width:100%;max-width:1080px}
-  h1{font-size:28px;margin:0 0 2px;letter-spacing:.5px}
+  body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);color:var(--ink);
+       font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;display:flex;justify-content:center;padding:28px 16px}
+  .wrap{width:100%;max-width:1160px}
+  h1{font-size:30px;margin:0 0 2px;letter-spacing:.5px}
   h1 .em{color:var(--accent)}
-  .sub{color:var(--muted);margin:0 0 20px;font-style:italic;font-size:15px}
+  .sub{color:var(--muted);margin:0 0 18px;font-style:italic;font-size:15px}
   .layout{display:flex;gap:18px;align-items:flex-start}
-  /* sidebar of voices */
-  .side{width:210px;flex:none;background:var(--panel);border:1px solid var(--edge);
-        border-radius:14px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  .side h2{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);
-           margin:4px 6px 10px}
-  .voice{display:block;width:100%;text-align:left;background:#2c2620;border:1px solid var(--edge);
-         color:var(--ink);border-radius:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;
-         font:inherit;transition:.12s}
+  .side{width:230px;flex:none;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  .side h2{font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  .voice{position:relative;display:block;width:100%;text-align:left;background:#2c2620;border:1px solid var(--edge);color:var(--ink);
+         border-radius:11px;padding:11px 13px;margin-bottom:8px;cursor:pointer;font:600 15px/1.25 inherit;transition:.12s}
   .voice:hover{border-color:var(--accent2)}
-  .voice.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
-            border-color:var(--accent);font-weight:600}
+  .voice.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;border-color:var(--accent)}
   .voice small{display:block;font-size:11.5px;color:var(--muted);font-weight:400;margin-top:2px}
   .voice.on small{color:#3a2a12}
-  /* phrase board */
-  .board .ph{display:block;width:100%;text-align:left;background:#221d18;border:1px dashed var(--edge);
-             color:var(--ink);border-radius:9px;padding:9px 12px;margin-bottom:7px;cursor:pointer;
-             font:14px/1.3 inherit;transition:.12s}
-  .board .ph:hover{border-color:var(--accent);border-style:solid}
-  .board .ph:disabled{opacity:.5;cursor:default}
-  /* main */
-  .card{flex:1;min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:14px;
-        padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;
-        color:var(--muted);margin:16px 0 8px}
+  .voice.add{border-style:dashed;color:var(--muted);font-weight:400}
+  .voice .del{position:absolute;right:9px;top:7px;font-size:14px;color:var(--muted);padding:2px 5px;border-radius:6px}
+  .voice .del:hover{color:#ffd9cf;background:rgba(192,71,47,.25)}
+  .card{flex:1;min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  label{display:block;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
   label:first-child{margin-top:0}
   .pills{display:flex;gap:8px;flex-wrap:wrap}
-  .pill{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;
-        padding:7px 12px;font-size:13.5px;cursor:pointer;transition:.12s}
+  .pill{background:#2c2620;border:1px solid var(--edge);color:var(--ink);border-radius:9px;padding:8px 13px;font-size:14px;cursor:pointer;transition:.12s}
   .pill:hover{border-color:var(--accent2)}
-  .pill.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;
-           border-color:var(--accent);font-weight:600}
+  .pill.on{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#1a130a;border-color:var(--accent);font-weight:600}
   .modedesc{font-size:12.5px;color:var(--muted);font-style:italic;min-height:16px;margin:8px 2px 0}
-  textarea{width:100%;min-height:96px;resize:vertical;background:#1c1713;color:var(--ink);
-           border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit;margin-top:6px}
+  .toggles{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:14px;color:var(--muted)}
+  .toggles label{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:14px;letter-spacing:0;text-transform:none;color:var(--ink);cursor:pointer}
+  textarea{width:100%;resize:vertical;background:#1c1713;color:var(--ink);border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font:inherit;margin-top:6px}
   textarea:focus{outline:none;border-color:var(--accent)}
+  #scene{min-height:52px;font-size:14.5px}
+  #text{min-height:84px}
   .hint{font-size:12.5px;color:var(--muted);margin:8px 2px 0}
-  .hint code{background:#1c1713;border:1px solid var(--edge);border-radius:5px;
-             padding:1px 6px;color:var(--accent);font-family:ui-monospace,monospace}
+  .hint code{background:#1c1713;border:1px solid var(--edge);border-radius:5px;padding:1px 6px;color:var(--accent);font-family:ui-monospace,monospace}
   .row{display:flex;gap:18px;flex-wrap:wrap;margin-top:6px}
   .fld{flex:1;min-width:150px}
-  select,input[type=range]{width:100%}
-  select{background:#1c1713;color:var(--ink);border:1px solid var(--edge);
-         border-radius:8px;padding:8px 10px;font:inherit}
+  select,input[type=range],input[type=text]{width:100%}
+  select,input[type=text]{background:#1c1713;color:var(--ink);border:1px solid var(--edge);border-radius:8px;padding:8px 10px;font:inherit}
   input[type=range]{accent-color:var(--accent)}
   .val{color:var(--accent);font-variant-numeric:tabular-nums}
   .btns{display:flex;gap:12px;margin-top:20px;align-items:center;flex-wrap:wrap}
@@ -71,7 +55,22 @@
   .status{color:var(--muted);font-size:13px;min-height:18px}
   audio{width:100%;margin-top:16px;display:none}
   .meta{margin-top:10px;font-size:12px;color:var(--muted);font-family:ui-monospace,monospace}
-  @media(max-width:640px){.layout{flex-direction:column}.side{width:100%}}
+  .board .ph{display:block;width:100%;text-align:left;background:#221d18;border:1px dashed var(--edge);color:var(--ink);border-radius:9px;padding:9px 12px;margin-bottom:7px;cursor:pointer;font:14px/1.3 inherit;transition:.12s}
+  .board .ph:hover{border-color:var(--accent);border-style:solid}
+  .board .ph:disabled{opacity:.5;cursor:default}
+  /* voice creator */
+  .modal[hidden]{display:none}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:20px;z-index:10}
+  .dlg{width:100%;max-width:560px;background:var(--panel);border:1px solid var(--edge);border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.6);max-height:92vh;overflow:auto}
+  .dlg h2{margin:0 0 4px;font-size:22px}
+  .dlg .sub{margin-bottom:12px}
+  .drop{margin-top:6px;border:2px dashed var(--edge);border-radius:12px;padding:18px;text-align:center;color:var(--muted);cursor:pointer;font-size:14px}
+  .drop.over{border-color:var(--accent);color:var(--ink)}
+  .drop.has{border-style:solid;border-color:var(--accent2);color:var(--ink)}
+  .result{margin-top:14px;background:#1c1713;border:1px solid var(--edge);border-radius:10px;padding:12px 14px;font-size:14px}
+  .result b{color:var(--accent)}
+  .result p{margin:6px 0}
+  @media (max-width:820px){.layout{flex-direction:column}.side{width:100%}}
 </style>
 </head>
 <body>
@@ -95,9 +94,16 @@
       <label>Delivery</label>
       <div class="pills" id="modes"></div>
       <div class="modedesc" id="modedesc"></div>
+      <div class="toggles">
+        <label><input type="checkbox" id="direct"> Auto delivery — the director picks the mode and per-sentence pace</label>
+        <label><input type="checkbox" id="song"> Song mode</label>
+      </div>
+
+      <label>Scene — what's happening (steers phrases, answers and the director)</label>
+      <textarea id="scene" placeholder="napr. v goblinej jaskyni, tulák práve zlyhal na nenápadnosti…"></textarea>
 
       <label>Text</label>
-      <textarea id="text" placeholder="Napíš, čo má povedať…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
+      <textarea id="text" placeholder="Napíš…">Brá**cho! Čo ti dá***va, kámo? No poď, ideme na to!</textarea>
       <div class="hint">Drawl a syllable with stars after its vowel — <code>Brá**cho</code> (each ≈ +150&nbsp;ms). A break is <code>TAB</code>, <code>—</code> or <code> - </code> (a natural short pause); <code>...</code> or two TABs = a long one. Speed <b>auto</b> = the delivery's natural pace. <b>Fix text</b> cleans typos and keeps your marks.</div>
 
       <div class="row">
@@ -113,9 +119,9 @@
         <div class="fld">
           <label style="display:flex;justify-content:space-between;align-items:center">
             <span>Speed · <span class="val" id="speedv">auto</span></span>
-            <span style="text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="auto" checked> auto</span>
+            <span style="text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)"><input type="checkbox" id="autospeed" checked> auto</span>
           </label>
-          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.12" disabled>
+          <input type="range" id="speed" min="0.8" max="1.6" step="0.02" value="1.0">
         </div>
       </div>
 
@@ -137,112 +143,183 @@
   </div>
 </div>
 
+<div class="modal" id="creator" hidden>
+  <div class="dlg">
+    <h2>New voice</h2>
+    <p class="sub">Name it, describe the character, drop a 10–30 s recording. The LLM writes the personality; you preview it.</p>
+    <label>Name</label>
+    <input type="text" id="cname" placeholder="napr. Starý mních Benedikt">
+    <label>Context</label>
+    <textarea id="ccontext" placeholder="kto to je, ako hovorí, odkiaľ je, čo chce…" style="min-height:70px"></textarea>
+    <label>Pitch</label>
+    <select id="cpitch">
+      <option value="auto">auto — measure the clip</option>
+      <option value="deep">deep male</option>
+      <option value="male">male</option>
+      <option value="female">female</option>
+    </select>
+    <label>Recording</label>
+    <div class="drop" id="drop">Drop an audio file here, or click to choose (mp3 / wav / m4a / webm)</div>
+    <input type="file" id="cfile" accept="audio/*" hidden>
+    <div class="btns">
+      <button class="go" id="ccreate">Create voice</button>
+      <button class="ghost" id="cclose">Close</button>
+      <span class="status" id="cstatus"></span>
+    </div>
+    <div class="result" id="cresult" hidden></div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
-const MODEDESC = {
-  bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery",
-  smug:"smug, gloating, victorious", pissed:"protective, furious, loud",
-  menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat",
-  soft:"reluctant, quietly sincere"};
-const MODESPEED = {bro:1.12,deadpan:1.05,smug:1.10,pissed:1.05,menace:1.00,panic:1.10,soft:1.00};
+const esc = s => String(s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const MODEDESC = {bro:"hyped, high-spirited", deadpan:"dry, deadpan mockery", smug:"smug, gloating, victorious",
+  pissed:"protective, furious, loud", menace:"quiet, ominous, dangerous", panic:"urgent, alarmed, combat", soft:"reluctant, quietly sincere"};
 const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
-const VDESC = {bag:"sarcastic, foul-mouthed", male:"neutral NPC", female:"neutral NPC", shopkeep:"manic merchant"};
 
-let voice = "bag", mode = "bro", lang = "sk";
+let voice = "bag", mode = "bro", lang = "sk", lastURL = null;
+const prefs = (() => { try { return JSON.parse(localStorage.getItem("bagprefs") || "{}"); } catch (e) { return {}; } })();
+function savePrefs(){ try { localStorage.setItem("bagprefs", JSON.stringify({direct:$("direct").checked, song:$("song").checked, scene:$("scene").value})); } catch (e) {} }
+$("direct").checked = !!prefs.direct; $("song").checked = !!prefs.song; $("scene").value = prefs.scene || "";
+["direct","song"].forEach(id => $(id).onchange = savePrefs);
+$("scene").addEventListener("input", savePrefs);
 
-function setMode(k){
-  mode=k;
-  [...$("modes").children].forEach(c=>c.classList.toggle("on",c.dataset.k===k));
-  $("modedesc").textContent=MODEDESC[k]||"";
-  $("speed").value=MODESPEED[k]||1.1; $("speedv").textContent=(MODESPEED[k]||1.1).toFixed(2)+"×";
-  $("space").value=MODESPACE[k]||"room";
-}
-$("modes").innerHTML = Object.keys(MODEDESC).map(k=>`<span class="pill${k==="bro"?" on":""}" data-k="${k}">${k}</span>`).join("");
-$("modes").onclick=e=>{ if(e.target.dataset.k) setMode(e.target.dataset.k); };
+// language
+$("langs").onclick = e => { if(!e.target.dataset.l) return; lang = e.target.dataset.l;
+  [...$("langs").children].forEach(c => c.classList.toggle("on", c.dataset.l === lang)); loadPhrases(); };
+
+// modes
+const modesEl = $("modes");
+for (const k of Object.keys(MODEDESC)) { const b = document.createElement("span"); b.className = "pill" + (k===mode?" on":""); b.textContent = k; b.dataset.m = k; modesEl.appendChild(b); }
+function showMode(k){ [...modesEl.children].forEach(c => c.classList.toggle("on", c.dataset.m === k)); $("modedesc").textContent = MODEDESC[k] || ""; }
+function setMode(k){ mode = k; showMode(k); $("space").value = MODESPACE[k] || "room"; }
+modesEl.onclick = e => { if(e.target.dataset.m) setMode(e.target.dataset.m); };
 setMode("bro");
 
-// language toggle — phrase labels follow it
-$("langs").onclick=e=>{ if(!e.target.dataset.l) return; lang=e.target.dataset.l;
-  [...$("langs").children].forEach(c=>c.classList.toggle("on",c.dataset.l===lang)); loadPhrases(); };
-
-// speed: auto (adaptive, server-side) or manual slider
-const autoEl=$("auto");
-function syncSpeed(){ const a=autoEl.checked; $("speed").disabled=a;
-  $("speedv").textContent=a?"auto":(+$("speed").value).toFixed(2)+"×"; }
-autoEl.onchange=syncSpeed;
-function speedVal(){ return autoEl.checked?null:+$("speed").value; }
-
-// voices sidebar
-fetch("/voices").then(r=>r.json()).then(d=>{
-  voice=d.default||"bag";
-  $("voices").innerHTML=Object.entries(d.voices).map(([k,label])=>
-    `<button class="voice${k===voice?" on":""}" data-k="${k}">${label}<small>${VDESC[k]||""}</small></button>`).join("");
+// voices
+async function loadVoices(select){
+  let d; try { d = await (await fetch("/voices")).json(); } catch (e) { d = {default:"bag", voices:{bag:{label:"Mr. Bag"}}}; }
+  if (select) voice = select; else if (!(voice in d.voices)) voice = d.default || "bag";
+  $("voices").innerHTML = Object.entries(d.voices).map(([k,v]) =>
+    `<button class="voice${k===voice?" on":""}" data-k="${esc(k)}">${esc(v.label)}<small>${esc(v.desc||"")}</small>${v.user?`<span class="del" data-del="${esc(k)}" title="delete voice">×</span>`:""}</button>`).join("")
+    + `<button class="voice add" data-k="__add">+<small>new voice…</small></button>`;
   loadPhrases();
-}).catch(()=>{ $("voices").innerHTML='<button class="voice on" data-k="bag">Mr. Bag</button>'; loadPhrases(); });
-$("voices").onclick=e=>{ const b=e.target.closest(".voice"); if(!b) return;
-  voice=b.dataset.k; [...$("voices").children].forEach(c=>c.classList.toggle("on",c===b)); loadPhrases(); };
-
-// phrase board — click a type, the LLM improvises a fresh line for this voice
-function loadPhrases(){
-  fetch("/phrases?voice="+encodeURIComponent(voice)+"&lang="+lang).then(r=>r.json()).then(d=>{
-    $("phrases").innerHTML=(d.types||[]).map(t=>`<button class="ph">${t}</button>`).join("");
-  }).catch(()=>{});
 }
-$("phrases").onclick=async e=>{
-  const b=e.target.closest(".ph"); if(!b) return;
-  const type=b.textContent;
-  [...$("phrases").children].forEach(c=>c.disabled=true);
-  $("status").textContent="improvising “"+type+"”…";
-  try{
-    const r=await fetch("/linetext",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({voice,type,lang})});
-    if(!r.ok) throw new Error("server "+r.status);
-    const d=await r.json();
-    $("text").value=d.text||""; $("text").focus();
-    $("status").textContent=(d.source==="bank"?"curated line ready":"improvised line ready")+" — read it, then press Speak";
-  }catch(err){ $("status").textContent="error: "+err.message; }
-  finally{ [...$("phrases").children].forEach(c=>c.disabled=false); }
+$("voices").onclick = async e => {
+  const del = e.target.closest(".del");
+  if (del) { e.stopPropagation(); if (!confirm("Delete this voice?")) return;
+    await fetch("/voices/" + encodeURIComponent(del.dataset.del), {method:"DELETE"}); if (voice === del.dataset.del) voice = "bag"; loadVoices(); return; }
+  const b = e.target.closest(".voice"); if (!b) return;
+  if (b.dataset.k === "__add") { openCreator(); return; }
+  voice = b.dataset.k; [...$("voices").children].forEach(c => c.classList.toggle("on", c === b)); loadPhrases();
+};
+loadVoices();
+
+// phrase board
+function loadPhrases(){
+  fetch("/phrases?voice=" + encodeURIComponent(voice)).then(r => r.json()).then(d => {
+    $("phrases").innerHTML = (d.types || []).map(t => `<button class="ph">${esc(t)}</button>`).join("");
+  }).catch(() => {});
+}
+$("phrases").onclick = async e => {
+  const b = e.target.closest(".ph"); if (!b) return;
+  const type = b.textContent;
+  [...$("phrases").children].forEach(c => c.disabled = true);
+  $("status").textContent = "improvising “" + type + "”…";
+  try {
+    const r = await fetch("/linetext", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({voice, type, lang, scene: $("scene").value})});
+    if (!r.ok) throw new Error("server " + r.status);
+    const d = await r.json();
+    $("text").value = d.text || ""; $("text").focus();
+    $("status").textContent = (d.source === "bank" ? "curated line ready" : "improvised line ready") + " — read it, then press Speak";
+  } catch (err) { $("status").textContent = "error: " + err.message; }
+  finally { [...$("phrases").children].forEach(c => c.disabled = false); }
 };
 
-$("speed").oninput=()=>{ if(!autoEl.checked) $("speedv").textContent=(+$("speed").value).toFixed(2)+"×"; };
-syncSpeed();
+// speed
+$("speed").oninput = () => { $("autospeed").checked = false; $("speedv").textContent = (+$("speed").value).toFixed(2) + "×"; };
+$("autospeed").onchange = () => { $("speedv").textContent = $("autospeed").checked ? "auto" : (+$("speed").value).toFixed(2) + "×"; };
 
-let lastURL=null;
-function busy(b,msg){ ["go","fix","dl"].forEach(id=>$(id).disabled=b); if(b&&msg)$("status").textContent=msg; }
+function play(blob){ if (lastURL) URL.revokeObjectURL(lastURL); lastURL = URL.createObjectURL(blob);
+  const a = $("audio"); a.src = lastURL; a.style.display = "block"; a.play().catch(() => {}); $("dl").disabled = false; }
+function busy(b, msg){ ["go","fix","dl"].forEach(id => $(id).disabled = b); if (msg !== undefined) $("status").textContent = msg; }
 
 async function speak(){
-  const text=$("text").value.trim(); if(!text){ $("status").textContent="…napíš niečo."; return; }
-  busy(true,"generating…"); $("dl").disabled=true; const t0=performance.now();
-  try{
-    const r=await fetch("/say",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({text,voice,mode,speed:speedVal(),space:$("space").value})});
-    if(!r.ok) throw new Error("server "+r.status);
-    const hz=r.headers.get("X-Bag-Hz"), drawls=r.headers.get("X-Bag-Drawls"), asp=r.headers.get("X-Bag-Speed");
-    const blob=await r.blob();
-    if(lastURL)URL.revokeObjectURL(lastURL); lastURL=URL.createObjectURL(blob);
-    const a=$("audio"); a.src=lastURL; a.style.display="block"; a.play().catch(()=>{});
-    $("status").textContent="done in "+((performance.now()-t0)/1000).toFixed(1)+"s";
-    $("meta").textContent="pitch "+hz+" Hz"+(asp?" · auto speed "+asp+"×":"")+(drawls?" · marks "+drawls:"");
-    $("dl").disabled=false;
-  }catch(e){ $("status").textContent="error: "+e.message; } finally{ ["go","fix"].forEach(id=>$(id).disabled=false); }
+  const text = $("text").value.trim(); if (!text) { $("status").textContent = "…say something."; return; }
+  busy(true, $("direct").checked ? "director is reading the line…" : "thinking…"); const t0 = performance.now();
+  try {
+    const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text, voice, mode, lang, direct: $("direct").checked, scene: $("scene").value, song: $("song").checked,
+        speed: $("autospeed").checked ? null : +$("speed").value, space: $("space").value})});
+    if (!r.ok) throw new Error("server " + r.status);
+    const hz = r.headers.get("X-Bag-Hz"), sp = r.headers.get("X-Bag-Speed"), chosen = r.headers.get("X-Bag-Mode"),
+          paces = r.headers.get("X-Bag-Paces"), drawls = r.headers.get("X-Bag-Drawls");
+    if ($("direct").checked && chosen && MODEDESC[chosen]) showMode(chosen);
+    play(await r.blob());
+    $("status").textContent = "done in " + ((performance.now()-t0)/1000).toFixed(1) + "s";
+    $("meta").textContent = "pitch " + hz + " Hz" + (sp ? " · speed " + sp + "×" : "") + (chosen && $("direct").checked ? " · director: " + chosen : "")
+      + (paces ? " · pace " + paces : "") + (drawls ? " · marks " + drawls : "");
+  } catch (err) { $("status").textContent = "error: " + err.message; }
+  finally { busy(false); }
 }
 async function fixText(){
-  const text=$("text").value.trim(); if(!text) return;
-  busy(true,"fixing…");
-  try{
-    const r=await fetch("/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,lang})});
-    const d=await r.json(); if(d.text) $("text").value=d.text;
-    $("status").textContent=d.error?("fix error: "+d.error):"text fixed";
-  }catch(e){ $("status").textContent="error: "+e.message; } finally{ busy(false); $("dl").disabled=!lastURL; }
+  const text = $("text").value.trim(); if (!text) return;
+  busy(true, "fixing…");
+  try {
+    const r = await fetch("/fix", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({text, lang})});
+    const d = await r.json(); if (d.text) $("text").value = d.text; $("status").textContent = "fixed";
+  } catch (err) { $("status").textContent = "error: " + err.message; }
+  finally { busy(false); }
 }
-$("go").onclick=speak; $("fix").onclick=fixText;
-$("dl").onclick=()=>{ if(!lastURL)return; const a=document.createElement("a"); a.href=lastURL; a.download=voice+".wav"; a.click(); };
-$("text").addEventListener("keydown",e=>{
-  if(e.key==="Tab"){ // TAB = a short break in the speech
-    e.preventDefault(); const t=$("text"), s=t.selectionStart, en=t.selectionEnd;
-    t.value=t.value.slice(0,s)+"\t"+t.value.slice(en); t.selectionStart=t.selectionEnd=s+1; return; }
-  if((e.metaKey||e.ctrlKey)&&e.key==="Enter") speak();
-});
+$("go").onclick = speak; $("fix").onclick = fixText;
+$("dl").onclick = () => { if (!lastURL) return; const a = document.createElement("a"); a.href = lastURL; a.download = "voice.wav"; a.click(); };
+$("text").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") speak(); });
+
+// ---- voice creator ----
+let cfileBlob = null;
+function openCreator(){ $("creator").hidden = false; $("cresult").hidden = true; $("cstatus").textContent = ""; }
+$("cclose").onclick = () => { $("creator").hidden = true; };
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("creator").hidden = true; });
+$("creator").addEventListener("click", e => { if (e.target === $("creator")) $("creator").hidden = true; });
+$("drop").onclick = () => $("cfile").click();
+$("cfile").onchange = () => { const f = $("cfile").files[0]; if (f) { cfileBlob = f; $("drop").textContent = f.name + " (" + Math.round(f.size/1024) + " KB)"; $("drop").classList.add("has"); } };
+$("drop").addEventListener("dragover", e => { e.preventDefault(); $("drop").classList.add("over"); });
+$("drop").addEventListener("dragleave", () => $("drop").classList.remove("over"));
+$("drop").addEventListener("drop", e => { e.preventDefault(); $("drop").classList.remove("over");
+  const f = e.dataTransfer.files[0]; if (f) { cfileBlob = f; $("drop").textContent = f.name + " (" + Math.round(f.size/1024) + " KB)"; $("drop").classList.add("has"); } });
+$("ccreate").onclick = async () => {
+  const name = $("cname").value.trim(); if (!name) { $("cstatus").textContent = "give it a name"; return; }
+  if (!cfileBlob) { $("cstatus").textContent = "drop a recording first"; return; }
+  $("ccreate").disabled = true; $("cstatus").textContent = "listening to the clip, writing the personality… (~20 s)";
+  try {
+    const fd = new FormData(); fd.append("audio", cfileBlob, cfileBlob.name || "clip.webm");
+    fd.append("name", name); fd.append("context", $("ccontext").value); fd.append("lang", lang);
+    fd.append("pitch", $("cpitch").value);
+    const r = await fetch("/voices/create", {method:"POST", body: fd});
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ("server " + r.status));
+    $("cresult").hidden = false;
+    $("cresult").innerHTML = `<p><b>${esc(d.label)}</b> — ${esc(d.desc)} · pitch ${d.hz} Hz</p>
+      <p><b>Personality</b><br>${esc(lang === "en" ? d.persona_en : d.persona)}</p>
+      <p><b>Heard in the clip</b><br><i>${esc(d.transcript || "(nothing transcribed)")}</i></p>
+      <p><b>Sample</b><br>${esc(d.sample || "")}</p>
+      <div class="btns"><button class="go" id="cpreview">Preview</button><button class="ghost" id="cdone">Use this voice</button></div>`;
+    $("cstatus").textContent = "voice created";
+    $("cpreview").onclick = async () => {
+      $("cpreview").disabled = true; $("cstatus").textContent = "rendering preview…";
+      try {
+        const rr = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({text: d.sample || name, voice: d.id, mode: "bro", lang, space: "room"})});
+        if (!rr.ok) throw new Error("server " + rr.status);
+        play(await rr.blob()); $("cstatus").textContent = "preview playing";
+      } catch (err) { $("cstatus").textContent = "error: " + err.message; }
+      finally { $("cpreview").disabled = false; }
+    };
+    $("cdone").onclick = () => { $("creator").hidden = true; loadVoices(d.id); };
+  } catch (err) { $("cstatus").textContent = "error: " + err.message; }
+  finally { $("ccreate").disabled = false; }
+};
 </script>
 </body>
 </html>

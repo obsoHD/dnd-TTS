@@ -24,6 +24,7 @@ import collections
 import difflib
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -70,6 +71,10 @@ MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
 # line is re-rolled once (catches garbled, looping or truncated generations).
 ASR_GATE = os.environ.get("BAG_ASR_GATE", "1") == "1"
 ASR_CER_MAX = float(os.environ.get("BAG_ASR_CER_MAX", "0.35"))
+# best-of-N: generate N in-band takes and keep the most natural one (scored on
+# intelligibility, pitch centre and duration vs. the expected pace). This is
+# what removes the "sometimes great, sometimes off" variance.
+BEST_OF = int(os.environ.get("BAG_BEST_OF", "2"))
 # Adaptive speed: the pace of the speech itself is measured (deliberate drawls,
 # breaks and chunk gaps subtracted) and pulled toward the delivery mode's target
 # words/sec — slow lines speed up, rushed lines ease off. Fallback target here.
@@ -142,7 +147,7 @@ def _persona(v: dict, lang: str) -> str:
     return v["persona_en"] if _is_en(lang) else v["persona"]
 
 VOICES = {
-    "bag":    {"ref": "/refs/bag_ref.wav", "label": "Mr. Bag (deep male)",
+    "bag":    {"ref": "/refs/bag_ref.wav", "label": "Mr. Bag (deep male)", "desc": "sarcastic, foul-mouthed",
                "pitch": "<|prosody:pitch_low|>", "band": (60, 155),
                # cloned from a deliberate audiobook narrator: he inherits that
                # pace, so bias him faster with the model's own speed tokens
@@ -152,17 +157,17 @@ VOICES = {
                "text": ("Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o "
                         "to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? "
                         "Možno je to zlodej, a možno nie. To je na tom vtipné.")},
-    "male":   {"ref": "/refs/male-voice.wav", "label": "Adam (male)",
+    "male":   {"ref": "/refs/male-voice.wav", "label": "Adam (male)", "desc": "neutral NPC",
                "pitch": "", "band": (75, 185), "persona": NPC_PERSONA,
                "persona_en": NPC_PERSONA_EN,
                "text": ("Hey, Adam here. Let's create something that feels real, "
                         "sounds human, and connects every time.")},
-    "female": {"ref": "/refs/female-voice.wav", "label": "Clara (female)",
+    "female": {"ref": "/refs/female-voice.wav", "label": "Clara (female)", "desc": "neutral NPC",
                "pitch": "", "band": (150, 290), "persona": NPC_PERSONA,
                "persona_en": NPC_PERSONA_EN,
                "text": ("By repeating what students say, teachers can demonstrate "
                         "that they are listening. By extending what students say.")},
-    "shopkeep": {"ref": "/refs/shopkeep_ref.wav", "label": "Crazy Shopkeep (male)",
+    "shopkeep": {"ref": "/refs/shopkeep_ref.wav", "label": "Crazy Shopkeep (male)", "desc": "manic merchant",
                  "pitch": "", "band": (105, 255), "persona": SHOPKEEP_PERSONA,
                  "persona_en": SHOPKEEP_PERSONA_EN,
                  "text": ("Why are you guys so anti-dictators? Imagine if America was "
@@ -173,6 +178,34 @@ VOICES = {
                           "of the poor for health care and education.")},
 }
 DEFAULT_VOICE = "bag"
+
+# User-created voices (Voice Creator): clip under /refs/user (the TTS may only
+# read references under /refs), registry in /refs/voices.json.
+USER_VOICES_PATH = "/refs/voices.json"
+USER_VOICE_DIR = "/refs/user"
+
+
+def _load_user_voices():
+    try:
+        with open(USER_VOICES_PATH, encoding="utf-8") as f:
+            for vid, v in json.load(f).items():
+                v["band"] = tuple(v.get("band", (70, 300)))
+                v.setdefault("pitch", "")
+                v["user"] = True
+                VOICES[vid] = v
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
+def _save_user_voices():
+    data = {k: {kk: (list(vv) if isinstance(vv, tuple) else vv) for kk, vv in v.items()}
+            for k, v in VOICES.items() if v.get("user")}
+    os.makedirs(USER_VOICE_DIR, exist_ok=True)
+    with open(USER_VOICES_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
+_load_user_voices()
 
 # Phrase board: per-character situation types. Clicking one has the LLM improvise
 # a fresh in-character line of that type, then speaks it. Tuned per persona.
@@ -213,7 +246,10 @@ _last_served: dict = {}
 
 def _bank_lines(voice_key: str, kind: str, lang: str) -> list:
     bank = PHRASE_BANK.get("en" if _is_en(lang) else "sk", {})
-    return list(bank.get(BANK_KEY.get(voice_key, "npc"), {}).get(kind, []))
+    key = BANK_KEY.get(voice_key)
+    if not key:                                         # user voices: improv only
+        return []
+    return list(bank.get(key, {}).get(kind, []))
 
 
 app = FastAPI(title="Bag")
@@ -323,7 +359,7 @@ def _synth(text: str, seed: int, ref: str, ref_text: str, max_tokens: int = 700)
     # the server's own defaults are T=1.0 with NO top_k/top_p (unfiltered) and
     # no repetition penalty at all — always send explicit, tamer sampling
     body = {"model": "/model", "stream": True, "response_format": "pcm",
-            "temperature": 0.8, "top_k": 40, "top_p": 0.95,
+            "temperature": 0.75, "top_k": 24, "top_p": 0.95,
             "max_new_tokens": max_tokens, "seed": seed,
             "voice": "default", "input": text,
             "references": [{"audio_path": ref, "text": ref_text}]}
@@ -342,13 +378,13 @@ _TTS_LOCK = threading.Lock()   # one GPU: one generation (gate loop included) at
 
 
 def voice_gen(text: str, voice: dict, max_tokens: int = 700,
-              seed_hint=None) -> tuple[bytes, int, dict]:
+              seed_hint=None, want: int = 1) -> list:
     with _TTS_LOCK:
-        return _voice_gen_unlocked(text, voice, max_tokens, seed_hint)
+        return _voice_gen_unlocked(text, voice, max_tokens, seed_hint, want)
 
 
 def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
-                        seed_hint=None) -> tuple[bytes, int, dict]:
+                        seed_hint=None, want: int = 1) -> list:
     """Generate until the pitch lands in this voice's band — the same gate that
     keeps Bag from drifting female also keeps a female voice from drifting deep.
     A seed that already worked (seed_hint) is tried first: seeds are
@@ -360,6 +396,7 @@ def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
     seeds = list(range(MAX_TRIES))
     if seed_hint is not None:
         seeds = [seed_hint] + [s for s in seeds if s != seed_hint]
+    hits = []
     for seed in seeds:
         pcm, sr = _synth(text, seed, voice["ref"], voice["text"], max_tokens)
         hz = _f0(pcm, sr)
@@ -368,10 +405,13 @@ def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
         if best is None or dist < best[3]:
             best = (pcm, sr, hz, dist)
         if lo < hz < hi:
-            return pcm, sr, {"accepted_seed": seed, "hz": round(hz),
-                             "tries": attempts}
-    return best[0], best[1], {"accepted_seed": None, "hz": round(best[2]),
-                              "tries": attempts, "note": "gate not met; closest kept"}
+            hits.append((pcm, sr, {"accepted_seed": seed, "hz": round(hz), "tries": list(attempts)}))
+            if len(hits) >= want:
+                break
+    if hits:
+        return hits
+    return [(best[0], best[1], {"accepted_seed": None, "hz": round(best[2]),
+                                "tries": attempts, "note": "gate not met; closest kept"})]
 
 
 # --------------------------------------------------------------- post-process
@@ -553,7 +593,7 @@ def _cue(sentence: str) -> float:
 
 
 def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
-                    lang: str = "sk") -> tuple[bytes, list, list]:
+                    lang: str = "sk", paces=None) -> tuple[bytes, list, list]:
     """One generation, per-sentence pace: align once, measure each sentence's
     articulation rate (syllables over its own speech-only time, drawl holds
     excluded) and stretch just that sentence toward the mode target adjusted by
@@ -571,7 +611,7 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
     holds = [(lbl, ms) for lbl, ms in applied if not lbl.endswith("|")]
     out, pos, idx, factors, rates = [], 0, 0, [], []
     target_base = MODE_SPS.get(mode_key, 5.4) * (EN_RATE_SCALE if _is_en(lang) else 1.0)
-    for s, c in zip(sents, counts):
+    for si, (s, c) in enumerate(zip(sents, counts)):
         if c == 0:
             continue
         a = int(bounds[idx][0] * sr)
@@ -595,9 +635,13 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
             # the model's own speed tokens carry the pace; post-stretch nudges.
             # Speeding up is far more tolerant than slowing down, so allow
             # +18% up but only -6% down; small dead-band.
-            f = max(0.94, min(1.22, target_base * _cue(s) / sps))
+            f = max(0.94, min(1.12, target_base * _cue(s) / sps))
             if 0.97 <= f <= 1.03:
                 f = 1.0
+        # the director's per-sentence pace (slow/normal/fast) on top of the measure
+        mult = PACE_MULT.get(paces[si] if paces and si < len(paces) else "normal", 1.0)
+        if mult != 1.0:
+            f = max(0.9, min(1.2, f * mult))
         y = seg.astype(np.float32) / 32768.0
         if f != 1.0:
             y = _stretch_np(y, sr, f)
@@ -627,7 +671,8 @@ def _place_tags(lead: str, clean: str) -> str:
 
 
 def _render(text: str, voice_key: str, mode_key: str,
-            speed=None, space=None, emotion="", lang: str = "sk") -> tuple[bytes, dict, list]:
+            speed=None, space=None, emotion="", lang: str = "sk",
+            paces=None, song=False) -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
@@ -640,6 +685,9 @@ def _render(text: str, voice_key: str, mode_key: str,
             mlead = mlead.replace("<|prosody:speed_fast|>", pace["fast"])
         elif "<|prosody:speed_" not in mlead:
             mlead += pace["default"]
+    if song:
+        # documented singing style; speed and other style tokens fight it
+        mlead = "<|style:singing|>" + re.sub(r"<\|style:[^|]*\|>|<\|prosody:speed_[^|]*\|>", "", mlead)
     lead = v["pitch"] + mlead                # voice sets timbre, mode sets delivery
     if emotion:
         lead = f"<|emotion:{emotion}|>" + lead
@@ -649,6 +697,7 @@ def _render(text: str, voice_key: str, mode_key: str,
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
     parts, drawls, meta, sr, factors, rates, seed_hint = [], [], {}, 24000, [], [], None
+    sent_off = 0
     for chunk in _chunks(text):
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
@@ -658,24 +707,40 @@ def _render(text: str, voice_key: str, mode_key: str,
         est = (_syllables(_spoken(clean)) / 4.5 + sum(m[3] for m in marks) * 0.15
                + 0.6 * clean.count("<|prosody:") + 1.0)
         max_tokens = max(150, min(900, int(est * 25 * 1.6) + 60))
-        pcm, sr, cmeta = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint)
-        if ASR_GATE:
-            cer = _asr_cer(pcm, sr, clean, lang)
-            if cer > ASR_CER_MAX:                     # garbled: one re-roll, keep the better
-                alt = ((cmeta.get("accepted_seed") or 0) + 1) % MAX_TRIES
-                pcm2, sr2, cmeta2 = voice_gen(_place_tags(lead, clean), v, max_tokens, alt)
-                cer2 = _asr_cer(pcm2, sr2, clean, lang)
-                if cer2 < cer:
-                    pcm, sr, cmeta, cer = pcm2, sr2, cmeta2, cer2
-                cmeta["rerolled"] = True
-            cmeta["cer"] = cer
+        cands = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint, BEST_OF)
+        lo, hi = v["band"]
+        mid = (lo + hi) / 2
+        exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(mode_key, 5.4)
+                                                 * (EN_RATE_SCALE if _is_en(lang) else 1.0))
+
+        def _score(c):
+            cpcm, csr, cm = c
+            cer = _asr_cer(cpcm, csr, clean, lang) if ASR_GATE else 0.0
+            dur = max(0.2, _speech_seconds(cpcm, csr))
+            sc = 3.0 * cer + 0.5 * abs(cm["hz"] - mid) / mid + abs(math.log(dur / max(0.2, exp_sec)))
+            return sc, cer
+
+        scored = [(_score(c), c) for c in cands]
+        (sc, cer), (pcm, sr, cmeta) = min(scored, key=lambda t: t[0][0])
+        if ASR_GATE and cer > ASR_CER_MAX and len(scored) < 3:   # still garbled: one more take
+            alt = ((cmeta.get("accepted_seed") or 0) + 3) % MAX_TRIES
+            for c in voice_gen(_place_tags(lead, clean), v, max_tokens, alt, 1):
+                sc2, cer2 = _score(c)
+                if sc2 < sc:
+                    (sc, cer), (pcm, sr, cmeta) = (sc2, cer2), c
+        cmeta["cer"] = cer
+        cmeta["candidates"] = len(scored)
+        cmeta["score"] = round(sc, 3)
         seed_hint = cmeta.get("accepted_seed", seed_hint)   # same seed across chunks
         pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
         drawls += applied
         meta = meta or cmeta
         if speed is None:
             # context-aware pacing: each sentence measured and stretched on its own
-            pcm, f, r = _pace_sentences(chunk, pcm, sr, mode_key, applied, lang)
+            n_s = len([x for x in _SENT.split(chunk) if x.strip()])
+            pcm, f, r = _pace_sentences(chunk, pcm, sr, mode_key, applied, lang,
+                                        (paces or [])[sent_off:sent_off + n_s])
+            sent_off += n_s
             factors += f
             rates += r
         parts.append(pcm)
@@ -749,7 +814,7 @@ def _ensure_llm_gpu():
 
 
 def _llm_reply(user_text: str, persona: str, history=None,
-               temperature=0.85, num_predict=180) -> str:
+               temperature=0.85, num_predict=180, json_mode=False) -> str:
     """The LLM via ollama, in persona, kept short. Warm-pinned via keep_alive."""
     _ensure_llm_gpu()
     msgs = [{"role": "system", "content": persona}]
@@ -761,6 +826,7 @@ def _llm_reply(user_text: str, persona: str, history=None,
     for attempt in range(2):                     # the model occasionally returns ""
         r = requests.post(LLM_URL + "/api/chat", timeout=180, json={
             "model": LLM_MODEL, "messages": msgs, "stream": False,
+            **({"format": "json"} if json_mode else {}),
             "keep_alive": -1,           # stay resident: a cold reload is ~90 s
             "think": False,             # Qwen3: no reasoning trace, just the line
             "options": {"temperature": temperature if attempt == 0 else 0.7,
@@ -807,6 +873,10 @@ def _stt(audio: bytes, filename: str, lang: str = "sk") -> str:
 # --------------------------------------------------------------------- routes
 class SayReq(BaseModel):
     text: str
+    direct: bool = False           # auto delivery: the director picks mode + paces
+    scene: str = ""                # DM scene context
+    song: bool = False
+    paces: list | None = None      # per-sentence slow/normal/fast
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
     lang: str = "sk"               # steers pace targets (EN runs ~15% slower)
@@ -817,6 +887,9 @@ class SayReq(BaseModel):
 
 class RespondReq(BaseModel):
     text: str
+    direct: bool = False
+    scene: str = ""
+    song: bool = False
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
     lang: str = "sk"
@@ -834,7 +907,94 @@ def modes():
 @app.get("/voices")
 def voices():
     return {"default": DEFAULT_VOICE,
-            "voices": {k: v["label"] for k, v in VOICES.items()}}
+            "voices": {k: {"label": v["label"], "desc": v.get("desc", ""), "user": bool(v.get("user"))}
+                       for k, v in VOICES.items()}}
+
+
+def _f0_median(pcm: bytes, sr: int) -> float:
+    n = len(pcm) // 2
+    win = int(2.5 * sr)
+    if n < win + sr:
+        return _f0(pcm, sr)
+    vals = []
+    for st in range(sr // 2, n - win, max(sr, (n - win) // 8)):
+        hz = _f0(pcm[st * 2:(st + win) * 2], sr)
+        if 55 < hz < 420:
+            vals.append(hz)
+    vals.sort()
+    # octave errors go UP (harmonics), so a low percentile is the safer centre
+    return vals[len(vals) * 3 // 10] if vals else 0.0
+
+
+@app.post("/voices/create")
+async def voices_create(audio: UploadFile = File(...), name: str = Form(...),
+                        context: str = Form(""), lang: str = Form("sk"),
+                        pitch: str = Form("auto")):
+    """Voice Creator: a recording + name/context in; the clip is converted and
+    trimmed, transcribed (whisper), its pitch band measured, and the LLM writes
+    the personality (SK + EN) and a sample line. The voice is registered and
+    persisted, ready to preview."""
+    raw = await audio.read()
+    p = subprocess.run(["ffmpeg", "-i", "pipe:0", "-ac", "1", "-ar", "24000", "-t", "30",
+                        "-af", "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.1",
+                        "-f", "s16le", "pipe:1"], input=raw, stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL)
+    pcm, sr = p.stdout, 24000
+    if len(pcm) < sr * 2 * 4:
+        return JSONResponse({"error": "recording too short or unreadable — give me 5-30 s of clean speech"},
+                            status_code=400)
+    slug = re.sub(r"[^a-z0-9]+", "-", "".join(elongation._fold_char(c) for c in name.lower())).strip("-")[:24]
+    vid = f"u_{slug or 'voice'}-{hashlib.sha1(pcm[:400000]).hexdigest()[:6]}"
+    os.makedirs(USER_VOICE_DIR, exist_ok=True)
+    path = os.path.join(USER_VOICE_DIR, vid + ".wav")
+    with open(path, "wb") as f:
+        f.write(_wav(pcm, sr))
+    try:
+        transcript = _stt(_wav(pcm, sr), "ref.wav", lang if lang in ("sk", "en") else "auto")
+    except Exception:                                   # noqa: BLE001
+        transcript = ""
+    med = _f0_median(pcm, sr) or 150.0
+    # explicit hint beats measurement (noisy clips produce octave errors)
+    band = {"deep": (60, 140), "male": (80, 185), "female": (150, 300)}.get(pitch)
+    if band is None:
+        band = (int(max(50, med * 0.65)), int(min(420, med * 1.5)))
+    sysm = ("You create character voice personalities for a D&D voice tool. Reply ONLY with JSON "
+            "with keys: label, desc, persona_sk, persona_en, sample_sk, sample_en.")
+    user = (f"Name: {name}\nContext: {context.strip() or 'no extra context'}\n"
+            "persona_sk and persona_en are system prompts (3-5 sentences), in Slovak and English "
+            "respectively: who the character is and HOW they talk (register, quirks, attitude), "
+            "ending with an instruction to answer in 1-3 short spoken sentences, no stage directions. "
+            "sample_sk / sample_en: one greeting line in character. label: the name. desc: 3-5 words.")
+    d = {}
+    try:
+        d = json.loads(_llm_reply(user, sysm, None, temperature=0.7, num_predict=700, json_mode=True))
+    except Exception:                                   # noqa: BLE001
+        d = {}
+    entry = {"ref": path, "text": transcript, "label": (d.get("label") or name).strip()[:40],
+             "desc": (d.get("desc") or context or "custom voice").strip()[:60], "pitch": "",
+             "band": band, "user": True,
+             "persona": ((d.get("persona_sk") or f"Si {name}. {context}").strip() + SK_RULES),
+             "persona_en": (d.get("persona_en") or f"You are {name}. {context}").strip(),
+             "sample_sk": (d.get("sample_sk") or "").strip(), "sample_en": (d.get("sample_en") or "").strip()}
+    VOICES[vid] = entry
+    _save_user_voices()
+    return {"id": vid, "label": entry["label"], "desc": entry["desc"], "persona": entry["persona"],
+            "persona_en": entry["persona_en"], "sample": entry["sample_en" if _is_en(lang) else "sample_sk"],
+            "hz": round(med), "band": list(band), "transcript": transcript}
+
+
+@app.delete("/voices/{vid}")
+def voices_delete(vid: str):
+    v = VOICES.get(vid)
+    if not v or not v.get("user"):
+        return JSONResponse({"error": "not a user voice"}, status_code=404)
+    VOICES.pop(vid)
+    _save_user_voices()
+    try:
+        os.remove(v["ref"])
+    except Exception:                                   # noqa: BLE001
+        pass
+    return {"ok": True}
 
 
 _CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
@@ -843,35 +1003,46 @@ _CACHE_MAX = 256
 
 @app.post("/say")
 def say(req: SayReq):
-    if not req.text.strip():
+    text = req.text.strip()
+    if not text:
         return Response(status_code=400, content="empty text")
-    key = hashlib.sha1(json.dumps([req.text.strip(), req.voice, req.mode, req.lang,
-                                   req.speed, req.space, req.emotion],
+    key = hashlib.sha1(json.dumps([text, req.voice, req.mode, req.lang, req.speed, req.space,
+                                   req.emotion, req.direct, req.scene, req.song, req.paces],
                                   ensure_ascii=False).encode("utf-8")).hexdigest()
     hit = _CACHE.get(key)
     if hit:                                          # identical line: instant replay
         _CACHE.move_to_end(key)
-        wav, meta, drawls = hit
-        return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode, "X-Bag-Cache": "hit"})
-    wav, meta, drawls = _render(req.text.strip(), req.voice, req.mode,
-                                req.speed, req.space, req.emotion, req.lang)
-    _CACHE[key] = (wav, meta, drawls)
+        wav, meta, drawls, mode = hit
+        return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "hit",
+                                                   "X-Bag-Paces": ",".join(meta.get("paces", []))})
+    mode, paces = req.mode, req.paces
+    if req.direct:                                   # the director picks mode + per-sentence pace
+        mode, paces = _direct(text, req.voice, req.lang, req.scene)
+    wav, meta, drawls = _render(text, req.voice, mode, req.speed, req.space, req.emotion,
+                                req.lang, paces=paces, song=req.song)
+    meta["paces"] = list(paces or [])
+    _CACHE[key] = (wav, meta, drawls, mode)
     while len(_CACHE) > _CACHE_MAX:
         _CACHE.popitem(last=False)
-    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode, "X-Bag-Cache": "miss"})
+    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Cache": "miss",
+                                               "X-Bag-Paces": ",".join(meta.get("paces", []))})
 
 
 @app.post("/respond")
 def respond(req: RespondReq):
-    """DM/player types -> Bag (in persona) answers, spoken."""
+    """DM/player types -> the character (in persona, scene-aware) answers, spoken."""
     heard = req.text.strip()
     if not heard:
         return Response(status_code=400, content="empty text")
     v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
-    reply = _llm_reply(heard, _persona(v, req.lang), req.history)
-    wav, meta, drawls = _render(reply, req.voice, req.mode, req.speed, req.space, lang=req.lang)
-    return _audio_response(wav, meta, drawls,
-                           {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
+    reply = _llm_reply(heard, _with_scene(_persona(v, req.lang), req.scene, req.lang), req.history)
+    mode, paces = req.mode, None
+    if req.direct:
+        mode, paces = _direct(reply, req.voice, req.lang, req.scene)
+    wav, meta, drawls = _render(reply, req.voice, mode, req.speed, req.space, lang=req.lang,
+                                paces=paces, song=req.song)
+    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": mode, "X-Bag-Heard": quote(heard),
+                                               "X-Bag-Reply": quote(reply)})
 
 
 def _lang_rule(lang: str) -> str:
@@ -880,6 +1051,7 @@ def _lang_rule(lang: str) -> str:
 
 
 class LineReq(BaseModel):
+    scene: str = ""
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
     type: str = ""                 # a phrase-type from PHRASE_TYPES
@@ -895,7 +1067,49 @@ def phrases(voice: str = DEFAULT_VOICE, lang: str = "sk"):
     return {"voice": voice, "lang": key, "types": types[key]}
 
 
-def _improv_line(voice_key: str, kind: str, lang: str) -> str:
+PACE_MULT = {"slow": 0.92, "normal": 1.0, "fast": 1.12}
+DIRECTOR_MODES_SK = {"bro": "hype, kamošské, dobrá nálada", "deadpan": "suché, bez emócií, ironické",
+                     "smug": "samoľúby, chvastavý", "pissed": "nahnevaný, ochranársky, hlasný",
+                     "menace": "tichý, výhražný šepot", "panic": "panika, boj, rýchle",
+                     "soft": "neochotne úprimné, mäkké"}
+
+
+def _with_scene(persona: str, scene: str, lang: str) -> str:
+    scene = (scene or "").strip()
+    if not scene:
+        return persona
+    return persona + (f" Current scene: {scene}" if _is_en(lang) else f" Aktuálna scéna: {scene}")
+
+
+def _direct(text: str, voice_key: str, lang: str, scene: str = ""):
+    """Auto delivery: an LLM director picks the delivery mode for the line and a
+    pace (slow/normal/fast) per sentence from content and scene."""
+    sents = [x.strip() for x in _SENT.split(text) if x.strip()]
+    if _is_en(lang):
+        sysm = ("You are the voice director for a D&D character voice. Choose ONE delivery mode "
+                "for the whole line from: " + ", ".join(f"{k} ({v['desc']})" for k, v in MODES.items())
+                + ". Then for EACH numbered sentence choose a pace: slow, normal or fast, from its "
+                "content and the scene. Reply ONLY with JSON: {\"mode\": \"...\", \"paces\": [\"fast\", ...]} "
+                "with exactly one pace per sentence.")
+    else:
+        sysm = ("Si hlasový režisér pre postavu z D&D. Vyber JEDEN spôsob podania celej repliky z: "
+                + ", ".join(f"{k} ({DIRECTOR_MODES_SK[k]})" for k in MODES)
+                + ". Potom pre KAŽDÚ očíslovanú vetu vyber tempo: slow, normal alebo fast, podľa "
+                "obsahu a scény. Odpovedz IBA JSON: {\"mode\": \"...\", \"paces\": [\"fast\", ...]} "
+                "— presne jedno tempo na vetu.")
+    sysm = _with_scene(sysm, scene, lang)
+    user = "\n".join(f"{i + 1}. {x}" for i, x in enumerate(sents)) or text
+    try:
+        d = json.loads(_llm_reply(user, sysm, None, temperature=0.2, num_predict=160, json_mode=True))
+        mode = d.get("mode") if d.get("mode") in MODES else DEFAULT_MODE
+        paces = [p if p in PACE_MULT else "normal" for p in (d.get("paces") or [])][:len(sents)]
+        paces += ["normal"] * (len(sents) - len(paces))
+        return mode, paces
+    except Exception:                                   # noqa: BLE001
+        return DEFAULT_MODE, ["normal"] * len(sents)
+
+
+def _improv_line(voice_key: str, kind: str, lang: str, scene: str = "") -> str:
     """One improvised in-character line. Monolingual prompt per language, with
     the model asked to place one or two natural short pauses as em dashes —
     those become short deterministic silences downstream."""
@@ -918,7 +1132,8 @@ def _improv_line(voice_key: str, kind: str, lang: str) -> str:
                   f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
                   f"Vlož jednu až dve prirodzené krátke pauzy ako pomlčku (—) tam, "
                   f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.{ex}")
-    text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.8, num_predict=90)
+    text = _llm_reply(prompt, _with_scene(_persona(v, lang), scene, lang), None,
+                      temperature=0.8, num_predict=90)
     text = text.strip().strip('"').split("\n")[0].strip()
     if text and not _is_en(lang):
         # minimal-edit grammar pass (cases/agreement/bohemisms), style untouched
@@ -939,13 +1154,13 @@ def linetext(req: LineReq):
     LLM improv only when the bank has nothing for this type."""
     kind = (req.type or "").strip()
     lines = _bank_lines(req.voice, kind, req.lang)
-    if len(lines) >= 2:
+    if len(lines) >= 2 and not req.scene.strip():   # a scene wants scene-aware improv
         key = (req.voice, kind, req.lang)
         pool = [l for l in lines if l != _last_served.get(key)] or lines
         line = random.choice(pool)
         _last_served[key] = line
         return {"text": line, "source": "bank"}
-    return {"text": _improv_line(req.voice, kind, req.lang), "source": "improv"}
+    return {"text": _improv_line(req.voice, kind, req.lang, req.scene), "source": "improv"}
 
 
 @app.post("/line")
@@ -998,15 +1213,16 @@ def fix(req: FixReq):
 
 @app.post("/converse")
 async def converse(audio: UploadFile = File(...), voice: str = Form(DEFAULT_VOICE),
-                   mode: str = Form(DEFAULT_MODE), lang: str = Form("sk")):
+                   mode: str = Form(DEFAULT_MODE), lang: str = Form("sk"),
+                   scene: str = Form(""), song: bool = Form(False)):
     """Push-to-talk: speak -> Whisper -> Bag answers, spoken. One round trip."""
     heard = _stt(await audio.read(), audio.filename, lang)
     if not heard:
         return JSONResponse({"heard": "", "reply": "", "error": "no speech"},
                             status_code=200)
     v = VOICES.get(voice, VOICES[DEFAULT_VOICE])
-    reply = _llm_reply(heard, _persona(v, lang))
-    wav, meta, drawls = _render(reply, voice, mode, lang=lang)
+    reply = _llm_reply(heard, _with_scene(_persona(v, lang), scene, lang))
+    wav, meta, drawls = _render(reply, voice, mode, lang=lang, song=song)
     return _audio_response(wav, meta, drawls,
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
