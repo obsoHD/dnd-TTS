@@ -13,7 +13,7 @@
   body{margin:0;background:radial-gradient(120% 90% at 50% -10%,#2c241d,#151210 70%);
        color:var(--ink);font:16px/1.5 "Iowan Old Style",Georgia,serif;min-height:100vh;
        display:flex;justify-content:center;padding:28px 16px}
-  .wrap{width:100%;max-width:900px}
+  .wrap{width:100%;max-width:1080px}
   h1{font-size:28px;margin:0 0 2px;letter-spacing:.5px}
   h1 .em{color:var(--accent)}
   .sub{color:var(--muted);margin:0 0 20px;font-style:italic;font-size:15px}
@@ -31,6 +31,12 @@
             border-color:var(--accent);font-weight:600}
   .voice small{display:block;font-size:11.5px;color:var(--muted);font-weight:400;margin-top:2px}
   .voice.on small{color:#3a2a12}
+  /* phrase board */
+  .board .ph{display:block;width:100%;text-align:left;background:#221d18;border:1px dashed var(--edge);
+             color:var(--ink);border-radius:9px;padding:9px 12px;margin-bottom:7px;cursor:pointer;
+             font:14px/1.3 inherit;transition:.12s}
+  .board .ph:hover{border-color:var(--accent);border-style:solid}
+  .board .ph:disabled{opacity:.5;cursor:default}
   /* main */
   .card{flex:1;min-width:0;background:var(--panel);border:1px solid var(--edge);border-radius:14px;
         padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
@@ -80,6 +86,12 @@
     </aside>
 
     <div class="card">
+      <label>Language</label>
+      <div class="pills" id="langs">
+        <span class="pill on" data-l="sk">SK</span>
+        <span class="pill" data-l="en">EN</span>
+      </div>
+
       <label>Delivery</label>
       <div class="pills" id="modes"></div>
       <div class="modedesc" id="modedesc"></div>
@@ -114,6 +126,11 @@
       <audio id="audio" controls></audio>
       <div class="meta" id="meta"></div>
     </div>
+
+    <aside class="side board">
+      <h2>Phrases</h2>
+      <div id="phrases"></div>
+    </aside>
   </div>
 </div>
 
@@ -128,7 +145,7 @@ const MODESPEED = {bro:1.12,deadpan:1.05,smug:1.10,pissed:1.05,menace:1.00,panic
 const MODESPACE = {bro:"room",deadpan:"room",smug:"room",pissed:"room",menace:"hall",panic:"room",soft:"room"};
 const VDESC = {bag:"sarcastic, foul-mouthed", male:"neutral NPC", female:"neutral NPC", shopkeep:"manic merchant"};
 
-let voice = "bag", mode = "bro";
+let voice = "bag", mode = "bro", lang = "sk";
 
 function setMode(k){
   mode=k;
@@ -141,14 +158,45 @@ $("modes").innerHTML = Object.keys(MODEDESC).map(k=>`<span class="pill${k==="bro
 $("modes").onclick=e=>{ if(e.target.dataset.k) setMode(e.target.dataset.k); };
 setMode("bro");
 
+// language toggle
+$("langs").onclick=e=>{ if(!e.target.dataset.l) return; lang=e.target.dataset.l;
+  [...$("langs").children].forEach(c=>c.classList.toggle("on",c.dataset.l===lang)); };
+
 // voices sidebar
 fetch("/voices").then(r=>r.json()).then(d=>{
   voice=d.default||"bag";
   $("voices").innerHTML=Object.entries(d.voices).map(([k,label])=>
     `<button class="voice${k===voice?" on":""}" data-k="${k}">${label}<small>${VDESC[k]||""}</small></button>`).join("");
-}).catch(()=>{ $("voices").innerHTML='<button class="voice on" data-k="bag">Mr. Bag</button>'; });
+  loadPhrases();
+}).catch(()=>{ $("voices").innerHTML='<button class="voice on" data-k="bag">Mr. Bag</button>'; loadPhrases(); });
 $("voices").onclick=e=>{ const b=e.target.closest(".voice"); if(!b) return;
-  voice=b.dataset.k; [...$("voices").children].forEach(c=>c.classList.toggle("on",c===b)); };
+  voice=b.dataset.k; [...$("voices").children].forEach(c=>c.classList.toggle("on",c===b)); loadPhrases(); };
+
+// phrase board — click a type, the LLM improvises a fresh line for this voice
+function loadPhrases(){
+  fetch("/phrases?voice="+encodeURIComponent(voice)).then(r=>r.json()).then(d=>{
+    $("phrases").innerHTML=(d.types||[]).map(t=>`<button class="ph">${t}</button>`).join("");
+  }).catch(()=>{});
+}
+$("phrases").onclick=async e=>{
+  const b=e.target.closest(".ph"); if(!b) return;
+  const type=b.textContent;
+  [...$("phrases").children].forEach(c=>c.disabled=true);
+  $("status").textContent="improvising “"+type+"”…"; const t0=performance.now();
+  try{
+    const r=await fetch("/line",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({voice,mode,type,lang,speed:+$("speed").value,space:$("space").value})});
+    if(!r.ok) throw new Error("server "+r.status);
+    const line=decodeURIComponent(r.headers.get("X-Bag-Line")||""), hz=r.headers.get("X-Bag-Hz");
+    $("text").value=line;
+    const blob=await r.blob();
+    if(lastURL)URL.revokeObjectURL(lastURL); lastURL=URL.createObjectURL(blob);
+    const a=$("audio"); a.src=lastURL; a.style.display="block"; a.play().catch(()=>{});
+    $("status").textContent="done in "+((performance.now()-t0)/1000).toFixed(1)+"s";
+    $("meta").textContent="pitch "+hz+" Hz"; $("dl").disabled=false;
+  }catch(err){ $("status").textContent="error: "+err.message; }
+  finally{ [...$("phrases").children].forEach(c=>c.disabled=false); }
+};
 
 $("speed").oninput=()=>$("speedv").textContent=(+$("speed").value).toFixed(2)+"×";
 
@@ -175,7 +223,7 @@ async function fixText(){
   const text=$("text").value.trim(); if(!text) return;
   busy(true,"fixing…");
   try{
-    const r=await fetch("/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    const r=await fetch("/fix",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,lang})});
     const d=await r.json(); if(d.text) $("text").value=d.text;
     $("status").textContent=d.error?("fix error: "+d.error):"text fixed";
   }catch(e){ $("status").textContent="error: "+e.message; } finally{ busy(false); $("dl").disabled=!lastURL; }

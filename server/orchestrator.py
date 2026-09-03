@@ -95,6 +95,19 @@ VOICES = {
 }
 DEFAULT_VOICE = "bag"
 
+# Phrase board: per-character situation types. Clicking one has the LLM improvise
+# a fresh in-character line of that type, then speaks it. Tuned per persona.
+PHRASE_TYPES = {
+    "bag": ["Pozdrav kámoša", "Urážka partie", "Chvastanie po záchrane",
+            "Odmietnutie predmetu", "Bojový pokrik", "Sarkastická poznámka",
+            "Namrzené povzbudenie", "Ten nie."],
+    "shopkeep": ["Vítanie zákazníka", "Tvrdý predaj", "Jednanie o cene",
+                 "Nehorázna cena", "Vychvaľovanie tovaru", "Zatváram krám",
+                 "Podozrivá ponuka"],
+}
+NPC_PHRASE_TYPES = ["Pozdrav", "Varovanie", "Klebeta z mesta", "Ponuka úlohy",
+                    "Krčmová reč", "Rozlúčka"]
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 app = FastAPI(title="Bag")
 
@@ -343,24 +356,68 @@ def respond(req: RespondReq):
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
 
+def _lang_rule(lang: str) -> str:
+    return ("Odpovedaj po anglicky." if (lang or "sk").lower().startswith("en")
+            else "Odpovedaj po slovensky.")
+
+
+class LineReq(BaseModel):
+    voice: str = DEFAULT_VOICE
+    mode: str = DEFAULT_MODE
+    type: str = ""                 # a phrase-type from PHRASE_TYPES
+    lang: str = "sk"
+    speed: float | None = None
+    space: str | None = None
+
+
+@app.get("/phrases")
+def phrases(voice: str = DEFAULT_VOICE):
+    return {"voice": voice, "types": PHRASE_TYPES.get(voice, NPC_PHRASE_TYPES)}
+
+
+@app.post("/line")
+def line(req: LineReq):
+    """Click a phrase-type -> the LLM improvises a fresh in-character line of that
+    type -> speak it. Returns audio + the generated text (so it can be tweaked)."""
+    v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
+    kind = (req.type or "replika").strip()
+    prompt = (f"Povedz JEDNU krátku repliku. Situácia alebo typ: {kind}. "
+              f"Odpovedz IBA replikou, jedna až dve vety, v úlohe, bez úvodzoviek. "
+              f"{_lang_rule(req.lang)}")
+    text = _llm_reply(prompt, v["persona"], None, temperature=0.95, num_predict=90)
+    text = text.strip().strip('"').split("\n")[0].strip()
+    wav, meta, drawls = _render(text, req.voice, req.mode, req.speed, req.space)
+    return _audio_response(wav, meta, drawls, {"X-Bag-Line": quote(text)})
+
+
 class FixReq(BaseModel):
     text: str
+    lang: str = "sk"
 
 
 @app.post("/fix")
 def fix(req: FixReq):
-    """Clean up Slovak typos/grammar without changing meaning or the ** markup."""
+    """Clean up typos/grammar without changing meaning, slang, or the ** markup."""
     t = req.text.strip()
     if not t:
         return {"text": ""}
-    system = (
-        "Si automatický korektor slovenského textu pre hru. Opravuj IBA preklepy, "
-        "diakritiku a interpunkciu. NEMEŇ slová, význam ani štýl. Slang a hovorové "
-        "slová (brácho, kámo, čávo, hej) NECHAJ PRESNE TAK, neprepisuj ich na "
-        "spisovné. Vulgarizmy nechaj — sú to repliky postáv. Hviezdičky (**) sú "
-        "značky a musíš ich nechať PRESNE tam a v presnom počte ako sú. NIKDY "
-        "neodmietni ani nekomentuj — vráť LEN opravený text.\n"
-        "Príklad: vstup 'brá**cho co ti dava kamo' -> výstup 'Brá**cho, čo ti dáva, kámo?'")
+    if (req.lang or "sk").lower().startswith("en"):
+        system = (
+            "You are an automatic proofreader for a game. Fix ONLY typos, spelling "
+            "and punctuation. Do NOT change words, meaning or style. Keep slang and "
+            "profanity as-is (they are character lines). The asterisks (**) are "
+            "markers — keep them EXACTLY where and how many they are. NEVER refuse or "
+            "comment — return ONLY the corrected text.\n"
+            "Example: input 'heey braa**cho whats up man' -> output 'Heey, braa**cho, what's up, man?'")
+    else:
+        system = (
+            "Si automatický korektor slovenského textu pre hru. Opravuj IBA preklepy, "
+            "diakritiku a interpunkciu. NEMEŇ slová, význam ani štýl. Slang a hovorové "
+            "slová (brácho, kámo, čávo, hej) NECHAJ PRESNE TAK, neprepisuj ich na "
+            "spisovné. Vulgarizmy nechaj — sú to repliky postáv. Hviezdičky (**) sú "
+            "značky a musíš ich nechať PRESNE tam a v presnom počte ako sú. NIKDY "
+            "neodmietni ani nekomentuj — vráť LEN opravený text.\n"
+            "Príklad: vstup 'brá**cho co ti dava kamo' -> výstup 'Brá**cho, čo ti dáva, kámo?'")
     try:
         fixed = _llm_reply(t, system, None, temperature=0.2, num_predict=200)
     except Exception as e:  # noqa: BLE001
