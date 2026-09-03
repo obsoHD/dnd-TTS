@@ -128,3 +128,29 @@ def test_measure_reads_a_minus_12_dbfs_tone():
 def test_measure_reports_silence_and_short_clips_as_minus_inf():
     assert m.measure(_tone(1.0, -120.0), SR)["lufs"] == float("-inf")
     assert m.measure(_tone(0.2, -12.0), SR)["lufs"] == float("-inf")
+
+
+# ---------------------------------------------------------------- level trim
+def _at_offset(pcm: bytes, offset_db: float) -> dict:
+    """Params whose fixed gain lands this clip ``offset_db`` from target with the trim off."""
+    free = {**E65, "trim_max_db": 0.0}
+    lufs = m.measure(m.master(pcm, SR, free), SR)["lufs"]
+    return {**E65, "gain_db": E65["gain_db"] + (m.DEFAULT["target_lufs"] + offset_db - lufs)}
+
+
+def test_trim_corrects_small_drift_fully(raw):
+    p = _at_offset(raw, 1.2)
+    assert m.measure(m.master(raw, SR, p), SR)["lufs"] == pytest.approx(m.DEFAULT["target_lufs"], abs=0.4)
+
+
+def test_trim_is_bounded_so_a_loud_line_stays_louder(raw):
+    p = _at_offset(raw, 5.0)
+    out = m.measure(m.master(raw, SR, p), SR)["lufs"]
+    # the limiter's transfer is a little sub-linear near its ceiling, hence the slack
+    assert out == pytest.approx(m.DEFAULT["target_lufs"] + 5.0 - m.DEFAULT["trim_max_db"], abs=0.8)
+
+
+def test_trim_off_leaves_the_fixed_gain_alone(raw):
+    p = _at_offset(raw, 1.2)
+    free = m.measure(m.master(raw, SR, {**p, "trim_max_db": 0.0}), SR)["lufs"]
+    assert free == pytest.approx(m.DEFAULT["target_lufs"] + 1.2, abs=0.4)

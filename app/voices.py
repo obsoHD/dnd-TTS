@@ -211,7 +211,9 @@ def _solve_gain(raws: list[tuple[bytes, int]], base: dict, target: float = TARGE
     stage makes loudness slightly sub-linear in gain."""
     from app import master, render
 
-    params = dict(base)
+    # WHY trim off: the solver wants the voice's true median level; with the
+    # per-line trim active every reading near the target would already sit on it.
+    params = {**base, "target_lufs": target, "trim_max_db": 0.0}
     for _ in range(3):
         readings = (master.measure(render.mastered(pcm, sr, params), sr)["lufs"] for pcm, sr in raws)
         loud = [lufs for lufs in readings if math.isfinite(lufs)]   # sub-400 ms clips read -inf

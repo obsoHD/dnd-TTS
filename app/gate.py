@@ -126,6 +126,19 @@ def _longest_internal_silence(x: np.ndarray, sr: int) -> float:
     return float(runs.max()) * frame / sr if runs.size else 0.0
 
 
+def speech_seconds(pcm: bytes, sr: int) -> float:
+    """Seconds of frames above the silence floor: how long the voice actually
+    speaks, pauses excluded. WHY: pace judged on total duration punishes a line
+    for its sentence breaks; a four-question line is not slow because it pauses."""
+    x = _floats(pcm)
+    frame = max(1, sr * FRAME_MS // 1000)
+    n_frames = x.size // frame
+    if n_frames == 0:
+        return 0.0
+    rms = np.sqrt(np.mean(x[: n_frames * frame].reshape(n_frames, frame) ** 2, axis=1))
+    return float(np.count_nonzero(rms > 10.0 ** (SILENCE_DBFS / 20.0))) * frame / sr
+
+
 def sanity(pcm: bytes, sr: int, syllables: int) -> tuple[bool, str]:
     """Cheap structural checks before any model runs: a take that is near-silent,
     wildly long/short for its syllable count, or has a > 1.5 s hole is a broken

@@ -1,10 +1,13 @@
 """Deterministic finishing chain for one rendered line (REBUILD §2.7).
 
 WHY a fixed chain: the reference clip *is* the voice. The master only makes every
-take of a voice sit in the same room at the same level; nothing here adapts to the
-individual line (no loudness normalisation, no internal silence editing). That is
-what makes ``master()`` byte-identical for identical input and params, and what
-lets an Energy change re-master the bank from the stored raw takes without the GPU.
+take of a voice sit in the same room at the same level; the one thing that reads
+the individual line is a bounded level trim (a few dB toward the target loudness,
+never more), because generation-to-generation level drift is noise, not delivery.
+No internal silence editing, no per-line EQ. Every stage is a pure function of the
+input and the params, so ``master()`` is byte-identical for identical input and
+params, and an Energy change re-masters the bank from the stored raw takes without
+the GPU.
 
 All audio crosses the boundary as int16 mono PCM bytes; float32 is internal only.
 """
@@ -15,12 +18,13 @@ import pyloudnorm as pyln
 from pedalboard import (Compressor, Gain, HighpassFilter, HighShelfFilter, Limiter,
                         PeakFilter, Pedalboard, Reverb, time_stretch)
 
-VERSION = "1"
+VERSION = "2"   # 2: bounded per-line level trim
 
 DEFAULT = dict(energy=65, hpf_hz=50, presence_hz=3000, presence_q=1.0, air_hz=10000, comp_ratio=3.0,
                comp_attack_ms=5, comp_release_ms=100, comp_threshold_db=-24.0, tempo=1.0, tempo_cap=1.10,
                pitch_st=0.0, gain_db=0.0, room_size=0.22, room_damping=0.65, room_wet=0.08, limiter_dbtp=-1.0,
-               fade_in_ms=8, fade_out_ms=60, lead_ms=40, tail_ms=250)
+               fade_in_ms=8, fade_out_ms=60, lead_ms=40, tail_ms=250,
+               target_lufs=-18.0, trim_max_db=2.0)
 
 # Energy (0-100) is the only knob; these slopes are the spec's (REBUILD §2.7).
 PRESENCE_DB_PER_ENERGY = 0.04
@@ -93,8 +97,9 @@ def master(raw_pcm: bytes, sr: int, params: dict) -> bytes:
     """Run one raw take through the fixed chain; int16 PCM in, int16 PCM out.
 
     Order (contract): edge trim, HPF, presence bell, air shelf, compressor,
-    tempo, fixed gain, room, limiter, peak ceiling, fades. Two pedalboard passes
-    bracket the time-stretch because it is a function, not a plugin. Every stage
+    tempo, fixed gain, room, bounded trim, limiter, peak ceiling, fades. Several
+    pedalboard passes: the time-stretch is a function, not a plugin, and the trim
+    is metered on the limited signal and then applied ahead of the limiter. Every stage
     is a fixed-coefficient filter or a pure array operation and each call builds
     fresh plugin instances, so identical input and params give identical bytes
     and no state leaks between lines.
@@ -107,6 +112,9 @@ def master(raw_pcm: bytes, sr: int, params: dict) -> bytes:
     x = _run(_tone_stage(p), x, sr)
     x = _stretch(x, sr, p)
     x = _run(_room_stage(p), x, sr)
+    limited = _run(_limit_stage(p, 0.0), x, sr)
+    trim = _trim_db(limited, sr, p)
+    x = limited if trim == 0.0 else _run(_limit_stage(p, trim), x, sr)
     x = _ceiling(x)
     x = _fade(x, sr, p["fade_in_ms"], p["fade_out_ms"])
     return _encode(x)
@@ -124,8 +132,29 @@ def _tone_stage(p: dict) -> Pedalboard:
     ])
 
 
+def _trim_db(x: np.ndarray, sr: int, p: dict) -> float:
+    """Bounded per-line level correction in dB, applied together with the fixed gain.
+
+    WHY bounded: the calibrated fixed gain sets the voice's level; what is left is
+    random drift between generations of a bare line, and a table wants every tile
+    to land at one level. The bound keeps this a correction, so a line that is
+    genuinely much louder or softer stays audibly so. Metered on the *limited*
+    signal, because the limiter is not level-transparent (its own makeup stage
+    adds several dB below the ceiling); the trim is then applied ahead of a fresh
+    limiter pass so the ceiling still holds. Clips too short to meter get no trim;
+    ``trim_max_db`` 0 disables the stage.
+    """
+    limit = float(p["trim_max_db"])
+    if limit <= 0.0:
+        return 0.0
+    lufs = _lufs(x, sr)
+    if not np.isfinite(lufs):
+        return 0.0
+    return float(np.clip(float(p["target_lufs"]) - lufs, -limit, limit))
+
+
 def _room_stage(p: dict) -> Pedalboard:
-    """Fixed gain, the shared room, limiter: every voice in one space at its calibrated level.
+    """Fixed gain, then the shared room: every voice in one space at its calibrated level.
 
     WHY dry = 1 - wet: the room must not change the level of the voice, only add
     its space, so the two levels always sum to unity.
@@ -135,6 +164,13 @@ def _room_stage(p: dict) -> Pedalboard:
         Gain(gain_db=float(p["gain_db"])),
         Reverb(room_size=float(p["room_size"]), damping=float(p["room_damping"]),
                wet_level=wet, dry_level=1.0 - wet),
+    ])
+
+
+def _limit_stage(p: dict, trim_db: float) -> Pedalboard:
+    """The bounded trim, then the limiter that guards the ceiling."""
+    return Pedalboard([
+        Gain(gain_db=trim_db),
         Limiter(threshold_db=float(p["limiter_dbtp"])),
     ])
 

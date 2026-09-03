@@ -22,7 +22,7 @@ from app import config, gate, render, store, tts_client, voices
 REPO = Path(__file__).resolve().parents[1]
 GOLDEN_LUFS_TOLERANCE = 2.0
 WORD_RATIO = (0.75, 1.25)
-SEC_PER_SYLLABLE = (0.12, 0.35)
+SEC_PER_SYLLABLE = (0.10, 0.32)   # over speech time only: sentence pauses are not slow speech
 STT_TIMEOUT_S = 30.0        # offline check: unlike the gate, waiting for whisper costs nothing here
 
 
@@ -166,7 +166,7 @@ def cmd_golden(args: argparse.Namespace) -> int:
         r = render.render_line(v, text)
         transcript = heard(r.pcm, r.sr, v.lang)
         f0 = f0_median_hz(r.pcm, r.sr)
-        sps = store.duration_s(r.pcm, r.sr) / r.canon.syllables
+        sps = gate.speech_seconds(r.pcm, r.sr) / r.canon.syllables
         fails = golden_failures(v, r, transcript, f0, sps)
         failed += bool(fails)
         ratio = gate.word_ratio(r.canon.spoken, transcript) if transcript is not None else None

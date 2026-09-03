@@ -328,3 +328,9 @@ def test_speaker_gate_caches_reference_embedding_and_scores_cosine(tmp_path, fak
     stale = cache.stat().st_mtime - 10
     os.utime(cache, (stale, stale))               # a re-locked ref.wav is newer than its cache
     assert gate.SpeakerGate(ref).similarity(_sine(1.0), SR) == pytest.approx(0.0)  # recomputed
+
+
+def test_speech_seconds_excludes_pauses():
+    pcm = _sine(1.0) + _silence(0.8) + _sine(0.5)
+    assert gate.speech_seconds(pcm, SR) == pytest.approx(1.5, abs=0.05)
+    assert gate.speech_seconds(b"", SR) == 0.0
