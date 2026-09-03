@@ -52,7 +52,8 @@ def load():
 
 
 def _fold_char(c: str) -> str:
-    return _FOLD.get(c, c.lower())
+    c = c.lower()
+    return _FOLD.get(c, c)
 
 
 def parse_marks(text: str):
@@ -75,7 +76,7 @@ def parse_marks(text: str):
                 continue
             disp.append(c)
             fc = _fold_char(c)
-            if fc.isalpha():
+            if "a" <= fc <= "z":          # aligner dictionary is ASCII a-z only
                 folded.append(fc)
             i += 1
         disp_words.append("".join(disp))
