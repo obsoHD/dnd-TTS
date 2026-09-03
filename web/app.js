@@ -15,6 +15,11 @@ const LIMIT = 250;        // improv bar hard cap (contract: "250 counter")
 const LAST_N = 10;
 const SLOTS = 8;
 const LANGS = ['sk', 'en'];
+const BARE = 'bare';                                  // delivery id that adds no token (contract: reads "normalne")
+const BARE_LABEL = 'normálne';
+const DELIVERY_KEY = 'bag.delivery';
+/** Used until GET /api/deliveries answers: the bar must stay usable when the writer router is absent. */
+const BARE_ONLY = [{ id: BARE, label: BARE_LABEL, token: '', armed: true, measured: false }];
 const audio = document.getElementById('audio');
 
 /* ---------------- helpers ---------------- */
@@ -40,7 +45,11 @@ async function api(method, path, body) {
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`${method} ${path} -> ${res.status}`);
+    err.status = res.status;   // the pencil has to tell 503 (brain absent) from every other failure
+    throw err;
+  }
   return res.status === 204 ? null : res.json();
 }
 
@@ -103,6 +112,30 @@ function armAudio(el) {
 
 const isTyping = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
 const initials = (label) => label.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase();
+
+/* ---------------- delivery selection ---------------- */
+
+/** The delivery is per voice, so one map survives reloads; a private window simply gets bare every time. */
+function deliveryMap() {
+  try { return JSON.parse(localStorage.getItem(DELIVERY_KEY)) || {}; } catch { return {}; }
+}
+
+function storedDelivery(voiceId) {
+  const id = deliveryMap()[voiceId];
+  return typeof id === 'string' ? id : BARE;
+}
+
+function storeDelivery(voiceId, id) {
+  try { localStorage.setItem(DELIVERY_KEY, JSON.stringify({ ...deliveryMap(), [voiceId]: id })); } catch { /* ignore */ }
+}
+
+/** Bare is always offered and always reads the same, whatever the server calls it. */
+const deliveryLabel = (d) => (!d ? BARE_LABEL : d.id === BARE ? BARE_LABEL : d.label);
+const selectable = (d) => d.id === BARE || d.armed;
+const pickable = (items, id) => (items.some((d) => d.id === id && selectable(d)) ? id : BARE);
+
+/** The brain is usable only while it is resident; anything else keeps the pencil disabled. */
+const brainReady = (ready) => ready?.llm === 'resident' || ready?.llm === true;
 
 /** Server status overlaid with what this client saw in job and play events. */
 function tileState(line, job, now) {
@@ -217,15 +250,62 @@ function Grid({ lines, loading, tile }) {
   return html`<section class="grid">${lines.map((l) => tile(l, { key: l.id }))}</section>`;
 }
 
-function ImprovBar({ text, lang, onText, onLang, onSpeak }) {
-  return html`<div class="improv">
-    <input class="line" type="text" maxlength=${LIMIT} autocomplete="off" spellcheck="false"
-      placeholder="type a line, Enter speaks" value=${text} onInput=${(e) => onText(e.target.value)} />
-    <span class="count ${text.length > LIMIT - 20 ? 'warn' : ''}">${text.length}/${LIMIT}</span>
-    <span class="pills">${LANGS.map((l) => html`
-      <button key=${l} class="pill ${l === lang ? 'on' : ''}" onClick=${() => onLang(l)}>${l.toUpperCase()}</button>`)}</span>
-    <button class="speak" disabled=${!text.trim()} onClick=${onSpeak}>Speak</button>
+const Pencil = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M4 20l4.5-1.2L19 8.3l-3.3-3.3L5.2 15.5 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+  <path d="M14.4 6.3l3.3 3.3" fill="none" stroke="currentColor" stroke-width="1.8" />
+</svg>`;
+
+const Gear = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+  <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+  <path d="M12 2.6v2.6M12 18.8v2.6M21.4 12h-2.6M5.2 12H2.6M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8M18.6 18.6l-1.8-1.8M7.2 7.2L5.4 5.4"
+        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+</svg>`;
+
+/** The gear opens the delivery menu; the popover shows every spice so the DM can see the mechanism, armed or not. */
+function DeliveryPill({ items, value, open, onToggle, onPick }) {
+  const current = items.find((d) => d.id === value);
+  return html`<div class="delivery">
+    <button class="dsel ${value === BARE ? '' : 'on'}" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      aria-label="prednes" title=${`prednes: ${deliveryLabel(current)}`} onClick=${onToggle}><${Gear} /></button>
+    ${open && html`<div class="dpop" role="menu">${items.map((d) => html`
+      <button key=${d.id} class="dopt ${d.id === value ? 'on' : ''}" role="menuitem"
+        disabled=${!selectable(d)} onClick=${() => onPick(d.id)}>
+        <span class="dlbl">${deliveryLabel(d)}</span>
+        ${!selectable(d) && html`<small class="dwhy">neoverené v Labe</small>`}
+      </button>`)}</div>`}
   </div>`;
+}
+
+/** Returns an array so the ghost line sits under the bar without nesting it inside the flex row. */
+function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fixUndo, fixNote, brainDown,
+                    onText, onLang, onSpeak, onDelivery, onDeliveryToggle, onFix, onUndo }) {
+  const undoKey = (e) => {
+    if (!e.ctrlKey || e.key.toLowerCase() !== 'z' || fixUndo === null) return;
+    e.preventDefault();                       // the browser's own undo would fight the replacement
+    onUndo();
+  };
+  return [
+    html`<div class="improv">
+      <input class="line" type="text" maxlength=${LIMIT} autocomplete="off" spellcheck="false"
+        placeholder="type a line, Enter speaks" value=${text} readOnly=${fixing}
+        onInput=${(e) => onText(e.target.value)} onKeyDown=${undoKey} />
+      <button class="fix" title="Opraviť (Ctrl+Enter opraví a povie)" aria-label="opraviť"
+        disabled=${fixing || brainDown || !text.trim()} onClick=${onFix}>
+        ${fixing ? html`<span class="spin"></span>` : html`<${Pencil} />`}
+      </button>
+      <span class="count ${text.length > LIMIT - 20 ? 'warn' : ''}">${text.length}/${LIMIT}</span>
+      <${DeliveryPill} items=${deliveries} value=${delivery} open=${deliveryOpen}
+        onToggle=${onDeliveryToggle} onPick=${onDelivery} />
+      <span class="pills">${LANGS.map((l) => html`
+        <button key=${l} class="pill ${l === lang ? 'on' : ''}" onClick=${() => onLang(l)}>${l.toUpperCase()}</button>`)}</span>
+      <button class="speak" disabled=${!text.trim()} onClick=${onSpeak}>Speak</button>
+    </div>`,
+    (fixUndo !== null || fixNote) && html`<div class="fixline">
+      ${fixUndo !== null
+        ? html`<span>opravené — <button class="undo" onClick=${onUndo}>vrátiť</button></span>`
+        : html`<span>${fixNote}</span>`}
+    </div>`,
+  ];
 }
 
 function LastTen({ items, meta, onReplay, onRegen, onPin }) {
@@ -253,6 +333,9 @@ class App extends Component {
     meta: {},     // render_id -> {line_id, text, take_no, verified, gate, pinned}
     last: [],     // newest first: {key, render_id, label}
     text: '', progress: 0, error: null,
+    // improv bar: the chosen delivery for the active voice, and the pencil's one-shot undo
+    deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false,
+    fixing: false, fixUndo: null, fixNote: null, brainDown: false,
   };
   id = clientId();
 
@@ -261,6 +344,10 @@ class App extends Component {
     audio.addEventListener('timeupdate', () => this.setState({ progress: audio.duration ? audio.currentTime / audio.duration : 0 }));
     audio.addEventListener('ended', () => this.onEnded());
     window.addEventListener('keydown', (e) => this.onKey(e));
+    // pointerdown, not click: the popover must be gone before the press lands anywhere else
+    window.addEventListener('pointerdown', (e) => {
+      if (this.state.deliveryOpen && !e.target.closest?.('.delivery')) this.setState({ deliveryOpen: false });
+    });
     this.sock = openSocket(wsUrl(this.id), {
       open: () => { this.setState({ wsUp: true }); this.boot(); },
       close: () => this.setState({ wsUp: false }),
@@ -282,6 +369,7 @@ class App extends Component {
       const kept = this.state.voice && voices.find((v) => v.id === this.state.voice.id);
       const voice = kept || voices.find((v) => v.id === 'bag') || voices.find((v) => v.locked) || voices[0] || null;
       this.setState({ voices, voice, lang: kept ? this.state.lang : voice?.lang || 'sk', error: null }, () => this.loadBoard());
+      this.loadDeliveries(voice, true);
       this.setState({ player: await api('GET', '/api/player') });
     } catch (e) { this.fail(e); }
   }
@@ -295,6 +383,27 @@ class App extends Component {
         ? { board, tab: board.categories.includes(s.tab) ? s.tab : board.categories[0] || null }
         : null));
     } catch (e) { this.fail(e); }
+  }
+
+  /** The spice list is per voice. `restore` keeps the stored choice (boot, reconnect); a voice change resets to bare.
+   *  A missing endpoint is not something the DM can act on: the bar falls back to bare and keeps working. */
+  async loadDeliveries(voice, restore) {
+    if (!voice) return this.setState({ deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false });
+    let items;
+    try { items = await api('GET', `/api/deliveries?voice=${encodeURIComponent(voice.id)}`); }
+    catch { items = BARE_ONLY; }
+    if (!Array.isArray(items) || !items.length) items = BARE_ONLY;
+    const delivery = pickable(items, restore ? storedDelivery(voice.id) : BARE);
+    storeDelivery(voice.id, delivery);
+    this.setState((st) => (st.voice?.id === voice.id ? { deliveries: items, delivery, deliveryOpen: false } : null));
+  }
+
+  setDelivery(id) {
+    const voice = this.state.voice;
+    if (!voice) return;
+    const delivery = pickable(this.state.deliveries, id);   // an unarmed spice is never selectable
+    storeDelivery(voice.id, delivery);
+    this.setState({ delivery, deliveryOpen: false });
   }
 
   /** Board refreshes are debounced: boot pre-render finishes dozens of jobs per minute. */
@@ -333,7 +442,8 @@ class App extends Component {
     const ready = d.ready ?? d.readyz ?? d;
     const player = d.player ?? (d.now !== undefined ? d : this.state.player);
     const queueDepth = Array.isArray(d.queue) ? d.queue.length : this.state.queueDepth;
-    this.setState({ ready, player, queueDepth });
+    // the pencil re-arms only when a status event says the brain is resident again
+    this.setState({ ready, player, queueDepth, ...(brainReady(ready) ? { brainDown: false } : {}) });
   }
 
   /** A cancelled job leaves no trace: the tile falls back to whatever the server says about the line. */
@@ -416,11 +526,14 @@ class App extends Component {
 
   /* ---- actions ---- */
 
-  async say({ text, lineId, label, takeNo = 0 }) {
+  /** `delivery` is sent only when the improv bar asked for a spice: board tiles stay bare by contract. */
+  async say({ text, lineId, label, takeNo = 0, delivery = null }) {
     const { voice, lang } = this.state;
     if (!voice || !text.trim()) return;
+    const body = { voice: voice.id, text, lang, priority: 'live', take_no: takeNo };
+    if (delivery && delivery !== BARE) body.delivery = delivery;
     try {
-      const r = await api('POST', '/api/say', { voice: voice.id, text, lang, priority: 'live', take_no: takeNo });
+      const r = await api('POST', '/api/say', body);
       this.noteMeta(r.render_id, { line_id: lineId, text, take_no: takeNo });
       if (r.cached) return this.play(r.render_id, label);
       this.registerJob(r.job_id, { line_id: lineId, label, text, take_no: takeNo, position: r.position, autoplay: true });
@@ -443,11 +556,44 @@ class App extends Component {
     this.say({ text: line.text, lineId: line.id, label: line.text });
   }
 
-  speak() {
-    const text = this.state.text.trim();
+  /** `override` lets Ctrl+Enter speak the text the fix just produced without waiting for a state flush. */
+  speak(override) {
+    const text = (override ?? this.state.text).trim();
     if (!text) return;
-    this.setState({ text: '' });
-    this.say({ text, lineId: null, label: text });
+    this.setState({ text: '', fixUndo: null, fixNote: null });
+    this.say({ text, lineId: null, label: text, delivery: this.state.delivery });
+  }
+
+  /** The pencil: one pass of the Writer over the box. Returns the text now in the box, null if it never answered. */
+  async fix() {
+    const { voice, lang, text, fixing, brainDown } = this.state;
+    const original = text.trim();
+    if (!voice || !original || fixing || brainDown) return null;
+    this.setState({ fixing: true, fixNote: null });
+    try {
+      const r = await api('POST', '/api/fix', { voice: voice.id, text: original, lang });
+      // the undo keeps the raw box content, not the trimmed line that was sent, so it restores exactly
+      if (r.changed) this.setState({ text: r.text, fixUndo: text, fixNote: null });
+      else this.setState({ fixNote: r.note || 'bez zmeny', fixUndo: null });
+      return r.changed ? r.text : text;
+    } catch (e) {
+      if (e.status === 503) this.setState({ brainDown: true, fixNote: null });
+      else this.fail(e);
+      return null;
+    } finally {
+      this.setState({ fixing: false });
+    }
+  }
+
+  /** Ctrl+Enter. A brain that never answered leaves the line in the box, so Enter still speaks it as typed. */
+  async fixThenSpeak() {
+    const fixed = await this.fix();
+    if (fixed !== null) this.speak(fixed);
+  }
+
+  /** Restores the pre-fix text character for character; the ghost line and Ctrl+Z share it. */
+  undoFix() {
+    this.setState((s) => (s.fixUndo === null ? null : { text: s.fixUndo, fixUndo: null, fixNote: null }));
   }
 
   async regenerate(it) {
@@ -478,7 +624,9 @@ class App extends Component {
   pickVoice(id) {
     const voice = this.state.voices.find((v) => v.id === id);
     if (!voice || voice.id === this.state.voice?.id) return;
-    this.setState({ voice, lang: voice.lang || this.state.lang, board: null, tab: null }, () => this.loadBoard());
+    this.setState({ voice, lang: voice.lang || this.state.lang, board: null, tab: null,
+      deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false }, () => this.loadBoard());
+    this.loadDeliveries(voice, false);
   }
 
   setLang(lang) {
@@ -489,7 +637,7 @@ class App extends Component {
   /** Keyboard map from the contract; digits and letters are ignored while typing, Enter and Esc never are. */
   onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); return this.stop(); }
-    if (e.key === 'Enter') { e.preventDefault(); return this.speak(); }
+    if (e.key === 'Enter') { e.preventDefault(); return e.ctrlKey ? this.fixThenSpeak() : this.speak(); }
     if (isTyping(e.target) || e.altKey || e.metaKey) return;
     if (e.ctrlKey) {
       if (e.key.toLowerCase() === 'p') { e.preventDefault(); this.pin(this.state.last[0] || {}); }
@@ -520,7 +668,12 @@ class App extends Component {
     const now = s.player?.now || null;
     const tile = (line, extra) => html`<${Tile} line=${line} job=${byLine[line.id]} state=${tileState(line, byLine[line.id], now)}
       progress=${s.progress} onTap=${() => this.tapLine(line)} ...${extra} />`;
-    const banner = s.error ? ['bad', s.error] : bannerFor(s.wsUp, s.ready, s.player);
+    const site = bannerFor(s.wsUp, s.ready, s.player);
+    // a dead brain outranks the standing warnings (a DM playing locally always has 'no speaker'),
+    // but never the two 'bad' ones: a lost socket or a dead TTS is the bigger problem on the table
+    const banner = s.error ? ['bad', s.error]
+      : site?.[0] === 'bad' ? site
+      : s.brainDown ? ['warn', 'mozog nie je pripravený'] : site;
     const catLines = (s.board?.lines || []).filter((l) => l.category === s.tab);
     return html`<div class="play">
       <${TopBar} voice=${s.voice} ready=${s.ready} speaker=${!!s.player?.speaker}
@@ -539,8 +692,13 @@ class App extends Component {
         </div>
       </div>
       <footer class="bottom">
-        <${ImprovBar} text=${s.text} lang=${s.lang} onText=${(text) => this.setState({ text })}
-          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()} />
+        <${ImprovBar} text=${s.text} lang=${s.lang} delivery=${s.delivery} deliveries=${s.deliveries}
+          deliveryOpen=${s.deliveryOpen} fixing=${s.fixing} fixUndo=${s.fixUndo} fixNote=${s.fixNote}
+          brainDown=${s.brainDown} onText=${(text) => this.setState({ text })}
+          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()}
+          onDelivery=${(id) => this.setDelivery(id)}
+          onDeliveryToggle=${() => this.setState((st) => ({ deliveryOpen: !st.deliveryOpen }))}
+          onFix=${() => this.fix()} onUndo=${() => this.undoFix()} />
         <${LastTen} items=${s.last} meta=${s.meta} onReplay=${(it) => this.play(it.render_id, it.label)}
           onRegen=${(it) => this.regenerate(it)} onPin=${(it) => this.pin(it)} />
       </footer>

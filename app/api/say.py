@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app import canon, worker
+from app import canon, delivery, voices, worker
 from app.jobs import new_job
 
 router = APIRouter()
@@ -30,6 +30,9 @@ class SayRequest(BaseModel):
     take_no: int = Field(default=0, ge=0)
     # A board tile passes its line so the render becomes the line's active one.
     line_id: str | None = None
+    # The DM's delivery (``app.delivery`` id, ``bare``/absent for none). Applied
+    # to the text here, so the token is part of the cache key and of nothing else.
+    delivery: str | None = None
 
 
 class SayResponse(BaseModel):
@@ -39,13 +42,27 @@ class SayResponse(BaseModel):
     position: int
 
 
-def _plan(req: SayRequest) -> worker.Plan:
+def _plan(req: SayRequest, text: str) -> worker.Plan:
     """Bad input is the caller's error (400/404), never a failed job."""
     try:
-        return worker.plan(req.voice, req.text, req.take_no)
+        return worker.plan(req.voice, text, req.take_no)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"unknown voice {req.voice!r}") from exc
     except (canon.TooLong, canon.BannedToken) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _delivered(req: SayRequest) -> str:
+    """The text the job will carry: the delivery token is placed here, at the
+    boundary, so it lands inside the hashed text and the worker, the store and
+    ``render_line`` never learn that deliveries exist (M3 contract)."""
+    if req.delivery is None:
+        return req.text
+    try:
+        return delivery.apply(req.text, req.delivery, voices.load_voice(req.voice))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"unknown voice {req.voice!r}") from exc
+    except delivery.NotArmed as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -53,8 +70,9 @@ def _plan(req: SayRequest) -> worker.Plan:
 def say(req: SayRequest, request: Request) -> SayResponse:
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="empty text")
-    p = _plan(req)
-    job = new_job(KIND, req.priority, req.voice, req.text, line_id=req.line_id, take_no=req.take_no)
+    text = _delivered(req)
+    p = _plan(req, text)
+    job = new_job(KIND, req.priority, req.voice, text, line_id=req.line_id, take_no=req.take_no)
     job.render_id = p.render_id            # known now, so job.queued carries it
     w: worker.RenderWorker = request.app.state.worker
     w.submit(job)

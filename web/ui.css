@@ -150,6 +150,45 @@ audio { display: none; }
   flex: none; min-height: 48px; padding: 0 22px; border-radius: 10px;
   background: linear-gradient(180deg, var(--accent), var(--accent2)); color: #1a130a; font-weight: 700; font-size: 16px;
 }
+/* Pencil: the Writer pass over the box. Same height as Speak so the bar keeps one baseline. */
+.fix {
+  flex: none; display: grid; place-items: center; width: 48px; min-height: 48px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); color: var(--ink);
+}
+.fix .ico { width: 22px; height: 22px; }
+.fix .spin {
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--edge); border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+}
+.improv .line[readonly] { color: var(--muted); }
+
+/* Delivery: the pill names the current delivery, the popover opens upward out of the sticky bar. */
+.delivery { position: relative; flex: none; }
+.dsel {
+  display: grid; place-items: center; width: 48px; min-height: 48px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); color: var(--ink);
+}
+.dsel .ico { width: 22px; height: 22px; }
+.dsel.on { border-color: var(--accent); color: var(--accent); }
+.dpop {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 6; min-width: 220px; max-height: 60vh;
+  overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 6px;
+  border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+}
+.dopt {
+  display: flex; align-items: baseline; gap: 8px; min-height: var(--tap); padding: 6px 10px; border-radius: 8px;
+  text-align: left; font-size: 15px;
+}
+.dopt.on { background: var(--accent); color: #1a130a; font-weight: 600; }
+.dopt:disabled { opacity: 1; color: var(--muted); }     /* greyed, but the label must stay readable */
+.dopt .dlbl { flex: 1; }
+.dopt .dwhy { flex: none; font-size: 11px; color: var(--muted); letter-spacing: .2px; }
+
+/* One-line ghost under the bar: what the pencil did, and the way back. */
+.fixline { font-size: 13px; color: var(--muted); min-height: 18px; }
+.fixline .undo { color: var(--accent); text-decoration: underline; padding: 0; font-size: 13px; }
+
 .last { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; min-height: 46px; }
 .last.none { align-items: center; color: var(--muted); font-size: 13px; }
 .item {
@@ -187,6 +226,8 @@ audio { display: none; }
   .improv { flex-wrap: wrap; }
   .improv .line { flex-basis: 100%; }
   .improv .count { order: 3; margin-left: auto; }
+  .dsel { width: 44px; min-height: 44px; }
+  .dpop { left: auto; right: 0; }             /* the pill sits far right on one line: keep the popover on screen */
   .item button { min-height: 44px; min-width: 44px; }
 }
 

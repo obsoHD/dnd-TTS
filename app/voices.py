@@ -60,6 +60,9 @@ class Voice:
     persona: dict = field(default_factory=dict)
     fillers: list[str] = field(default_factory=list)
     f0_band: list[int] = field(default_factory=lambda: [50, 420])
+    # Deliveries this voice has earned in the Lab, ``{spice_id: {sim_drop, min_sim,
+    # n, armed_at}}``. Written only by scripts/arm_spice.py, read by app.delivery.
+    armed_spices: dict = field(default_factory=dict)
 
 
 def voice_yaml(voice_id: str) -> Path:
@@ -104,6 +107,7 @@ def _from_mapping(d: dict) -> Voice:
         persona=dict(d.get("persona") or {}),
         fillers=[str(f) for f in d.get("fillers") or []],
         f0_band=[int(x) for x in d.get("f0_band") or [50, 420]],
+        armed_spices=dict(d.get("armed_spices") or {}),
     )
 
 
@@ -170,6 +174,9 @@ def lock_reference(voice_id: str, wav_in: Path, transcript: str) -> Voice:
     v.ref_tts_path = f"/refs/{voice_id}/ref.wav"
     v.version += 1
     v.gate = {**v.gate, **{k: UNCALIBRATED_GATE[k] for k in ("baseline", "p10", "strict", "loose", "calibrated_at")}}
+    # A new clip is a new voice: every armed spice was measured against the old
+    # embedding and the old thresholds, so it has to be re-earned in the Lab.
+    v.armed_spices = {}
     save_voice(v)
     return v
 
