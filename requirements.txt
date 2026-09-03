@@ -1,0 +1,25 @@
+# Runtime deps of the app image (docker/app.Dockerfile); the same list, minus torch,
+# is what the unit tests need locally.
+#
+# torch is CPU-only: the app never touches a GPU (the TTS container owns it) and the
+# CUDA wheel plus its nvidia-* deps would add several GB to the image.
+#
+# resemblyzer is deliberately NOT listed. Its metadata demands the source-only
+# `webrtcvad` (needs a C compiler the slim image lacks) and the py2-era `typing`
+# backport, so the Dockerfile installs it with --no-deps on top of the equivalents
+# below (webrtcvad-wheels provides the `webrtcvad` module resemblyzer imports).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+fastapi
+uvicorn[standard]
+pydantic
+pyyaml
+requests
+
+numpy
+scipy
+librosa
+pedalboard
+pyloudnorm
+webrtcvad-wheels
