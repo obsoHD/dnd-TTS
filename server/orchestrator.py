@@ -20,12 +20,16 @@ It also serves the browser UI at `/`. Config is env; see the bottom.
 """
 from __future__ import annotations
 
+import collections
+import difflib
+import hashlib
 import json
 import os
 import re
 import struct
 import subprocess
 import threading
+import time
 import urllib.request
 import wave
 from io import BytesIO
@@ -58,7 +62,13 @@ LLM_URL = os.environ.get("BAG_LLM_URL", "http://127.0.0.1:11434")
 # scheduler unloads it whenever the assistant frees VRAM.
 LLM_MODEL = os.environ.get("BAG_LLM_MODEL", "huihui_ai/qwen3.8-abliterated:27b")
 STT_URL = os.environ.get("BAG_STT_URL", "https://127.0.0.1:8443/stt")
+BROKER_URL = os.environ.get("BAG_BROKER_URL", "http://127.0.0.1:8090")   # lifeos VRAM broker
 MAX_TRIES = int(os.environ.get("BAG_MAX_TRIES", "8"))
+# ASR round-trip quality gate: whisper re-transcribes each rendered chunk; if
+# the character error rate vs the intended text is above the threshold the
+# line is re-rolled once (catches garbled, looping or truncated generations).
+ASR_GATE = os.environ.get("BAG_ASR_GATE", "1") == "1"
+ASR_CER_MAX = float(os.environ.get("BAG_ASR_CER_MAX", "0.35"))
 # Adaptive speed: the pace of the speech itself is measured (deliberate drawls,
 # breaks and chunk gaps subtracted) and pulled toward the delivery mode's target
 # words/sec — slow lines speed up, rushed lines ease off. Fallback target here.
@@ -85,6 +95,23 @@ SHOPKEEP_PERSONA = (
     "slovensky, hlasno, teatrálne a manicky. Všetko sa snažíš predať, vychvaľuješ "
     "svoj tovar do nebies a smeješ sa vlastným vtipom. Odpovedaj KRÁTKO — jedna až "
     "tri vety hovorenej reči, bez odrážok ani javiskových poznámok.")
+
+# Slovak quality rules + native few-shot examples: mid-size models measurably
+# improve with native-language demonstrations and explicit case/agreement and
+# anti-bohemism instructions. Appended to every Slovak persona.
+SK_RULES = (
+    " Píš výhradne spisovnou slovenčinou: dodržiavaj pády a zhodu prídavného mena s "
+    "podstatným menom, žiadne bohemizmy (vždyť, doporučiť, tady, jelikož, prostě), "
+    "žiadne anglické kalky. Príklady správnych replík: „Jasné, ja to vyriešim. Ako "
+    "vždy.“ „Toto? To ti nedám, kamoš. Ani náhodou.“ „Máš tridsať životov. Prestaň "
+    "fňukať a bojuj.“ „Kto zachránil deň? No predsa ja.“ „Tak poď, nemám na to celý deň.“")
+SK_FIX_SYSTEM = (
+    "Si korektor spisovnej slovenčiny. Oprav IBA gramatiku, pády, zhodu a bohemizmy. "
+    "Nemeň štýl, vulgarizmy, pomlčky, hviezdičky ani význam; rob čo najmenšie zmeny. "
+    "Ak je text správny, vráť ho nezmenený. Vráť LEN opravený text, nič iné.")
+BAG_PERSONA += SK_RULES
+NPC_PERSONA += SK_RULES
+SHOPKEEP_PERSONA += SK_RULES
 
 # English personas. The prompt must be MONOLINGUAL per request — a Slovak system
 # prompt plus "answer in English" makes the small model blend languages.
@@ -215,12 +242,14 @@ MODES = {
 }
 DEFAULT_MODE = "bro"
 
-# Target articulation rate per delivery mode in SYLLABLES/sec. Words/sec is a
-# bad pace metric for Slovak (long words) — it read every line as slow and
-# pinned the stretch at its cap. Syllable rate is what phonetics uses and is
-# language-independent enough for SK/EN. Provisional values.
-MODE_SPS = {"bro": 5.2, "deadpan": 4.5, "smug": 4.8, "pissed": 5.6,
-            "menace": 3.8, "panic": 6.0, "soft": 4.2}
+# Target ARTICULATION rate per delivery mode, syllables/sec over speech-only
+# time. Anchored on phonetics: Czech/Slovak conversational 5-6 syl/s (Slovak has
+# no published figure; Czech is the accepted proxy), slow/menacing 3.5-4.5,
+# hyped/furious/panic 6.5-7.5; English runs ~15% lower. Words/sec was wrong for
+# Slovak's long words and pinned every line at the cap.
+MODE_SPS = {"bro": 5.6, "deadpan": 5.2, "smug": 5.4, "pissed": 6.2,
+            "menace": 4.0, "panic": 6.4, "soft": 4.2}
+EN_RATE_SCALE = 0.85
 _VOW = "aeiouyáéíóúýäô"
 _SYL_DIPH = re.compile(r"i[aeu]|ô")
 _SYL_RL = re.compile(r"(?:^|[^aeiouyáéíóúýäô\W])[rlŕĺ](?=[^aeiouyáéíóúýäô\W]|$)")
@@ -265,9 +294,12 @@ def _f0(pcm: bytes, sr: int) -> float:
     return sr / best[1] if best[1] else 0.0
 
 
-def _synth(text: str, seed: int, ref: str, ref_text: str) -> tuple[bytes, int]:
+def _synth(text: str, seed: int, ref: str, ref_text: str, max_tokens: int = 700) -> tuple[bytes, int]:
+    # the server's own defaults are T=1.0 with NO top_k/top_p (unfiltered) and
+    # no repetition penalty at all — always send explicit, tamer sampling
     body = {"model": "/model", "stream": True, "response_format": "pcm",
-            "temperature": 0.8, "top_k": 50, "max_new_tokens": 700, "seed": seed,
+            "temperature": 0.8, "top_k": 40, "top_p": 0.95,
+            "max_new_tokens": max_tokens, "seed": seed,
             "voice": "default", "input": text,
             "references": [{"audio_path": ref, "text": ref_text}]}
     req = urllib.request.Request(TTS_URL + "/v1/audio/speech",
@@ -284,20 +316,27 @@ def _synth(text: str, seed: int, ref: str, ref_text: str) -> tuple[bytes, int]:
 _TTS_LOCK = threading.Lock()   # one GPU: one generation (gate loop included) at a time
 
 
-def voice_gen(text: str, voice: dict) -> tuple[bytes, int, dict]:
+def voice_gen(text: str, voice: dict, max_tokens: int = 700,
+              seed_hint=None) -> tuple[bytes, int, dict]:
     with _TTS_LOCK:
-        return _voice_gen_unlocked(text, voice)
+        return _voice_gen_unlocked(text, voice, max_tokens, seed_hint)
 
 
-def _voice_gen_unlocked(text: str, voice: dict) -> tuple[bytes, int, dict]:
+def _voice_gen_unlocked(text: str, voice: dict, max_tokens: int = 700,
+                        seed_hint=None) -> tuple[bytes, int, dict]:
     """Generate until the pitch lands in this voice's band — the same gate that
-    keeps Bag from drifting female also keeps a female voice from drifting deep."""
+    keeps Bag from drifting female also keeps a female voice from drifting deep.
+    A seed that already worked (seed_hint) is tried first: seeds are
+    deterministic here, so reusing one keeps the timbre stable across chunks."""
     lo, hi = voice["band"]
     mid = (lo + hi) / 2
     attempts = []
     best = None                                       # fallback: closest to band
-    for seed in range(MAX_TRIES):
-        pcm, sr = _synth(text, seed, voice["ref"], voice["text"])
+    seeds = list(range(MAX_TRIES))
+    if seed_hint is not None:
+        seeds = [seed_hint] + [s for s in seeds if s != seed_hint]
+    for seed in seeds:
+        pcm, sr = _synth(text, seed, voice["ref"], voice["text"], max_tokens)
         hz = _f0(pcm, sr)
         attempts.append(round(hz))
         dist = abs(hz - mid)
@@ -332,10 +371,11 @@ def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
 
 def _trim(pcm: bytes, sr: int) -> bytes:
     """Trim leading/trailing silence and clamp any runaway internal pause
-    (>1.2 s -> 0.7 s). Our 250 ms breaks sit well under that threshold."""
-    af = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.06,"
-          "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12,"
-          "areverse,silenceremove=stop_periods=-1:stop_duration=1.2:stop_threshold=-45dB:stop_silence=0.7")
+    (>1.2 s -> 0.7 s). Gentle: -55 dB threshold so quiet word endings survive,
+    and 300 ms of tail kept so the last word's natural decay is not chopped."""
+    af = ("silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.08,"
+          "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,"
+          "areverse,silenceremove=stop_periods=-1:stop_duration=1.2:stop_threshold=-50dB:stop_silence=0.7")
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
            "-af", af, "-f", "s16le", "pipe:1"]
     return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
@@ -392,7 +432,7 @@ def _process(pcm: bytes, sr: int, speed: float, space: str) -> bytes:
     x = _stretch_np(x, sr, max(0.5, min(2.0, speed)))
 
     board = Pedalboard([HighpassFilter(cutoff_frequency_hz=80),
-                        Compressor(threshold_db=-18, ratio=2.5, attack_ms=5, release_ms=90),
+                        Compressor(threshold_db=-20, ratio=1.8, attack_ms=8, release_ms=120),
                         *SPACES.get(space, SPACES["room"]),
                         Limiter(threshold_db=-1.0)])
     y = board(x[None, :], sr)[0]
@@ -409,6 +449,11 @@ def _process(pcm: bytes, sr: int, speed: float, space: str) -> bytes:
     ceiling = 10 ** (-1.0 / 20)
     if peak > ceiling:
         y = y * (ceiling / peak)
+    # gentle fade-in and a real fade-out over the reverb tail: no hard ending
+    fi, fo = int(0.008 * sr), int(0.07 * sr)
+    if y.size > fi + fo:
+        y[:fi] *= np.linspace(0.0, 1.0, fi, dtype=np.float32)
+        y[-fo:] *= np.linspace(1.0, 0.0, fo, dtype=np.float32)
     out = (np.clip(y, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
     return _wav(out, sr)
 
@@ -451,8 +496,103 @@ def _chunks(text: str, max_len: int = 220, min_len: int = 40) -> list[str]:
     return merged
 
 
+def _cue(sentence: str) -> float:
+    """What this sentence IS nudges its pace: exclamations and punchy short
+    lines faster, hesitation (…/—) and long descriptive sentences slower,
+    SHOUTED words faster."""
+    st = sentence.strip()
+    f = 1.0
+    if st.endswith("!"):
+        f *= 1.08
+    elif st.endswith("?"):
+        f *= 1.03
+    if "…" in st or "..." in st or "—" in st or "\t" in st:
+        f *= 0.94
+    n = len(st.split())
+    if n <= 3:
+        f *= 1.05
+    elif n >= 14:
+        f *= 0.96
+    if any(w.isupper() and len(w) > 2 for w in st.split()):
+        f *= 1.06
+    return f
+
+
+def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
+                    lang: str = "sk") -> tuple[bytes, list, list]:
+    """One generation, per-sentence pace: align once, measure each sentence's
+    articulation rate (syllables over its own speech-only time, drawl holds
+    excluded) and stretch just that sentence toward the mode target adjusted by
+    its cues. Joins land in the pauses between sentences, so they are silent."""
+    sents = [s for s in _SENT.split(chunk) if s.strip()]
+    counts = [len(elongation.parse_marks(s)[1]) for s in sents]
+    _, all_words, _, _ = elongation.parse_marks(chunk)
+    if sum(counts) != len(all_words) or not all_words:
+        return pcm, [], []
+    bounds = elongation.word_bounds(pcm, sr, all_words)
+    if len(bounds) != len(all_words):
+        return pcm, [], []
+
+    x = np.frombuffer(pcm, dtype=np.int16)
+    holds = [(lbl, ms) for lbl, ms in applied if not lbl.endswith("|")]
+    out, pos, idx, factors, rates = [], 0, 0, [], []
+    target_base = MODE_SPS.get(mode_key, 5.4) * (EN_RATE_SCALE if _is_en(lang) else 1.0)
+    for s, c in zip(sents, counts):
+        if c == 0:
+            continue
+        a = int(bounds[idx][0] * sr)
+        b = int(bounds[idx + c - 1][1] * sr)
+        words_here = elongation.parse_marks(s)[1]
+        idx += c
+        seg = x[a:b]
+        held = 0.0
+        for w in words_here:                       # this sentence's drawl holds
+            for k, (lbl, ms) in enumerate(holds):
+                if lbl == w:
+                    held += ms / 1000.0
+                    holds.pop(k)
+                    break
+        syl = _syllables(s.replace("*", ""))
+        speech = _speech_seconds(seg.tobytes(), sr) - held
+        if syl < 3 or speech < 0.4:                # too short to measure reliably
+            f, sps = 1.0, 0.0
+        else:
+            sps = syl / speech
+            # the model's own speed tokens carry the pace; post-stretch is only
+            # a small nudge — beyond ~6% speech time-stretch starts to sound worked
+            f = max(0.94, min(1.06, target_base * _cue(s) / sps))
+            if 0.97 <= f <= 1.03:
+                f = 1.0
+        y = seg.astype(np.float32) / 32768.0
+        if f != 1.0:
+            y = _stretch_np(y, sr, f)
+        out.append(x[pos:a])
+        out.append((np.clip(y, -1.0, 1.0) * 32767).astype(np.int16))
+        pos = b
+        factors.append(f)
+        rates.append(round(sps, 2))
+    out.append(x[pos:])
+    return np.concatenate(out).tobytes(), factors, rates
+
+
+_TOKEN = re.compile(r"<\|[^|]*\|>")
+
+
+def _spoken(text: str) -> str:
+    """The text without control tokens (for counting and CER)."""
+    return " ".join(_TOKEN.sub(" ", text).split())
+
+
+def _place_tags(lead: str, clean: str) -> str:
+    """Documented placement: delivery tokens (emotion/style/pitch/speed/
+    expressive) lead the turn, before any text; positional tokens (pause,
+    long_pause) stay inline where they fall. Drift is handled by the pitch
+    gate + pitch_low, not by moving the tags off the start."""
+    return lead + clean
+
+
 def _render(text: str, voice_key: str, mode_key: str,
-            speed=None, space=None, emotion="") -> tuple[bytes, dict, list]:
+            speed=None, space=None, emotion="", lang: str = "sk") -> tuple[bytes, dict, list]:
     """text (with ** markup) -> the chosen voice, in the chosen delivery mode,
     with exact-vowel drawls and speed/space shaping. The whole TTS path."""
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
@@ -466,41 +606,47 @@ def _render(text: str, voice_key: str, mode_key: str,
     # stable and the model's runaway on long inputs is bounded. Markup (** and
     # TAB/—/… breaks) is parsed per chunk so it still lands where written; the
     # model speaks a clean line and breaks become short deterministic silences.
-    parts, drawls, meta, sr, total_words, total_syl = [], [], {}, 24000, 0, 0
+    parts, drawls, meta, sr, factors, rates, seed_hint = [], [], {}, 24000, [], [], None
     for chunk in _chunks(text):
         clean, aligner_words, marks, breaks = elongation.parse_marks(chunk)
         if not clean:
             continue
-        pcm, sr, cmeta = voice_gen(lead + clean, v)
+        # per-line token cap: a held vowel gets truncated instead of running 10 s
+        # (25 codec frames/s; est. 4.5 syl/s plus the deliberate holds)
+        est = (_syllables(_spoken(clean)) / 4.5 + sum(m[3] for m in marks) * 0.15
+               + 0.6 * clean.count("<|prosody:") + 1.0)
+        max_tokens = max(150, min(900, int(est * 25 * 1.6) + 60))
+        pcm, sr, cmeta = voice_gen(_place_tags(lead, clean), v, max_tokens, seed_hint)
+        if ASR_GATE:
+            cer = _asr_cer(pcm, sr, clean, lang)
+            if cer > ASR_CER_MAX:                     # garbled: one re-roll, keep the better
+                alt = ((cmeta.get("accepted_seed") or 0) + 1) % MAX_TRIES
+                pcm2, sr2, cmeta2 = voice_gen(_place_tags(lead, clean), v, max_tokens, alt)
+                cer2 = _asr_cer(pcm2, sr2, clean, lang)
+                if cer2 < cer:
+                    pcm, sr, cmeta, cer = pcm2, sr2, cmeta2, cer2
+                cmeta["rerolled"] = True
+            cmeta["cer"] = cer
+        seed_hint = cmeta.get("accepted_seed", seed_hint)   # same seed across chunks
         pcm, applied = elongation.elongate(pcm, sr, aligner_words, marks, breaks)
         drawls += applied
-        total_words += len(clean.split())
-        total_syl += _syllables(chunk.replace("*", ""))
         meta = meta or cmeta
+        if speed is None:
+            # context-aware pacing: each sentence measured and stretched on its own
+            pcm, f, r = _pace_sentences(chunk, pcm, sr, mode_key, applied, lang)
+            factors += f
+            rates += r
         parts.append(pcm)
     if not parts:
         raise ValueError("nothing to say")
     meta["chunks"] = len(parts)
-    pcm = (b"\x00\x00" * int(0.25 * sr)).join(parts)   # one break's worth between chunks
+    pcm = _trim((b"\x00\x00" * int(0.25 * sr)).join(parts), sr)
 
-    # adaptive speed: nudge the delivery toward a natural dialogue pace from how
-    # fast the model actually spoke (words/sec) — not a fixed multiplier.
-    # An explicit speed from the UI overrides.
-    pcm = _trim(pcm, sr)                    # silence trim + runaway-pause clamp first
     if speed is None:
-        # adaptive: pace of the speech itself (deliberate drawls, breaks and
-        # chunk gaps subtracted), pulled toward this mode's target — both ways.
-        # speech-only time (energy gate drops pauses/breaks), minus the
-        # deliberate drawl holds, which are voiced but not "pace"
-        held = sum(ms for lbl, ms in drawls if not lbl.endswith("|")) / 1000.0
-        dur = max(0.3, _speech_seconds(pcm, sr) - held)
-        sps = max(1, total_syl) / dur                 # articulation rate, syl/s
-        target = MODE_SPS.get(mode_key, 4.8)
-        sp = max(0.88, min(1.18, target / sps))
-        if abs(sp - 1.0) < 0.05:
-            sp = 1.0
-        meta["adaptive_speed"] = round(sp, 2)
-        meta["sps"] = round(sps, 2)
+        meta["adaptive_speed"] = round(float(np.mean(factors)), 2) if factors else 1.0
+        meta["sps"] = round(float(np.mean(rates)), 2) if rates else 0.0
+        meta["pace"] = ",".join(f"{x:.2f}" for x in factors)
+        sp = 1.0                                   # already paced per sentence
     else:
         sp = speed
     return _process(pcm, sr, sp, spc), meta, drawls
@@ -512,15 +658,57 @@ def _audio_response(wav, meta, drawls, extra=None) -> Response:
                "X-Bag-Speed": str(meta.get("adaptive_speed", "")),
                "X-Bag-Chunks": str(meta.get("chunks", 1)),
                "X-Bag-Sps": str(meta.get("sps", "")),
+               "X-Bag-Pace": str(meta.get("pace", "")),
+               "X-Bag-Cer": str(meta.get("cer", "")),
                "X-Bag-Drawls": ";".join(f"{w}+{ms}ms" for w, ms in drawls)}
     if extra:
         headers.update(extra)
     return Response(content=wav, media_type="audio/wav", headers=headers)
 
 
+_llm_check = {"t": 0.0}
+
+
+def _llm_on_gpu() -> bool:
+    """Is Bag's model loaded AND (>=90%) GPU-resident? Another app's model can
+    displace it to CPU, where a 27B answers in 50-90 s instead of <1 s."""
+    try:
+        ps = requests.get(LLM_URL + "/api/ps", timeout=5).json().get("models", [])
+    except Exception:                                   # noqa: BLE001
+        return True                                     # can't tell; don't block
+    for m in ps:
+        if LLM_MODEL in (m.get("name"), m.get("model")):
+            return m.get("size_vram", 0) >= 0.9 * max(1, m.get("size", 1))
+    return False
+
+
+def _ensure_llm_gpu():
+    """Work WITH the lifeos scheduler: if our brain got displaced, ask the
+    broker for GPU 0 VRAM (it unloads idle, non-pinned ollama models first —
+    its own policy; Bag's model is pinned), then reload ours onto the GPU.
+    Checked at most every 30 s so it costs nothing on the normal path."""
+    now = time.time()
+    if now - _llm_check["t"] < 30:
+        return
+    _llm_check["t"] = now
+    if _llm_on_gpu():
+        return
+    try:
+        requests.post(BROKER_URL + "/broker/request-vram", timeout=90,
+                      json={"amount_mb": 18000, "requester": "bag", "gpu": 0})
+        requests.post(LLM_URL + "/api/generate", timeout=30,      # unload -> re-place
+                      json={"model": LLM_MODEL, "keep_alive": 0, "prompt": ""})
+        requests.post(LLM_URL + "/api/generate", timeout=240,     # reload on the GPU
+                      json={"model": LLM_MODEL, "keep_alive": -1, "prompt": "",
+                            "options": {"num_ctx": 4096}})
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
 def _llm_reply(user_text: str, persona: str, history=None,
                temperature=0.85, num_predict=180) -> str:
     """The LLM via ollama, in persona, kept short. Warm-pinned via keep_alive."""
+    _ensure_llm_gpu()
     msgs = [{"role": "system", "content": persona}]
     for h in (history or [])[-8:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
@@ -528,8 +716,9 @@ def _llm_reply(user_text: str, persona: str, history=None,
     msgs.append({"role": "user", "content": user_text})
     txt = ""
     for attempt in range(2):                     # the model occasionally returns ""
-        r = requests.post(LLM_URL + "/api/chat", timeout=120, json={
-            "model": LLM_MODEL, "messages": msgs, "stream": False, "keep_alive": "30m",
+        r = requests.post(LLM_URL + "/api/chat", timeout=180, json={
+            "model": LLM_MODEL, "messages": msgs, "stream": False,
+            "keep_alive": -1,           # stay resident: a cold reload is ~90 s
             "think": False,             # Qwen3: no reasoning trace, just the line
             "options": {"temperature": temperature if attempt == 0 else 0.7,
                         "num_predict": num_predict,
@@ -540,6 +729,28 @@ def _llm_reply(user_text: str, persona: str, history=None,
         if txt:
             break
     return txt
+
+
+def _norm_for_cer(s: str) -> str:
+    """Fold diacritics, drop punctuation, collapse repeated letters (so the
+    drawl spelling 'Bráácho' matches 'brácho'), for a fair CER."""
+    s = "".join(elongation._fold_char(c) for c in _spoken(s).lower())
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    s = re.sub(r"(.)\1+", r"\1", s)
+    return " ".join(s.split())
+
+
+def _asr_cer(pcm: bytes, sr: int, expected: str, lang: str) -> float:
+    """Character error rate of whisper's transcript vs the intended text.
+    0.0 if the STT is unavailable — the gate never blocks speaking."""
+    try:
+        heard = _stt(_wav(pcm, sr), "check.wav", "en" if _is_en(lang) else "sk")
+    except Exception:                                   # noqa: BLE001
+        return 0.0
+    a, b = _norm_for_cer(expected), _norm_for_cer(heard)
+    if not a:
+        return 0.0
+    return round(1.0 - difflib.SequenceMatcher(None, a, b).ratio(), 3)
 
 
 def _stt(audio: bytes, filename: str, lang: str = "sk") -> str:
@@ -555,6 +766,7 @@ class SayReq(BaseModel):
     text: str
     voice: str = DEFAULT_VOICE
     mode: str = DEFAULT_MODE
+    lang: str = "sk"               # steers pace targets (EN runs ~15% slower)
     speed: float | None = None
     space: str | None = None
     emotion: str = ""
@@ -582,13 +794,28 @@ def voices():
             "voices": {k: v["label"] for k, v in VOICES.items()}}
 
 
+_CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
+_CACHE_MAX = 256
+
+
 @app.post("/say")
 def say(req: SayReq):
     if not req.text.strip():
         return Response(status_code=400, content="empty text")
+    key = hashlib.sha1(json.dumps([req.text.strip(), req.voice, req.mode, req.lang,
+                                   req.speed, req.space, req.emotion],
+                                  ensure_ascii=False).encode("utf-8")).hexdigest()
+    hit = _CACHE.get(key)
+    if hit:                                          # identical line: instant replay
+        _CACHE.move_to_end(key)
+        wav, meta, drawls = hit
+        return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode, "X-Bag-Cache": "hit"})
     wav, meta, drawls = _render(req.text.strip(), req.voice, req.mode,
-                                req.speed, req.space, req.emotion)
-    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode})
+                                req.speed, req.space, req.emotion, req.lang)
+    _CACHE[key] = (wav, meta, drawls)
+    while len(_CACHE) > _CACHE_MAX:
+        _CACHE.popitem(last=False)
+    return _audio_response(wav, meta, drawls, {"X-Bag-Mode": req.mode, "X-Bag-Cache": "miss"})
 
 
 @app.post("/respond")
@@ -599,7 +826,7 @@ def respond(req: RespondReq):
         return Response(status_code=400, content="empty text")
     v = VOICES.get(req.voice, VOICES[DEFAULT_VOICE])
     reply = _llm_reply(heard, _persona(v, req.lang), req.history)
-    wav, meta, drawls = _render(reply, req.voice, req.mode, req.speed, req.space)
+    wav, meta, drawls = _render(reply, req.voice, req.mode, req.speed, req.space, lang=req.lang)
     return _audio_response(wav, meta, drawls,
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
@@ -641,7 +868,17 @@ def _improv_line(voice_key: str, kind: str, lang: str) -> str:
                   f"Vlož jednu až dve prirodzené krátke pauzy ako pomlčku (—) tam, "
                   f"kde by postava zaváhala alebo sa nadýchla. Len po slovensky.")
     text = _llm_reply(prompt, _persona(v, lang), None, temperature=0.8, num_predict=90)
-    return text.strip().strip('"').split("\n")[0].strip()
+    text = text.strip().strip('"').split("\n")[0].strip()
+    if text and not _is_en(lang):
+        # minimal-edit grammar pass (cases/agreement/bohemisms), style untouched
+        try:
+            fixed = _llm_reply(text, SK_FIX_SYSTEM, None, temperature=0.2, num_predict=120)
+            fixed = fixed.split("\n")[0].strip().strip('"')
+            if fixed and 0.5 < len(fixed) / len(text) < 2.0:
+                text = fixed
+        except Exception:                                   # noqa: BLE001
+            pass
+    return text
 
 
 @app.post("/linetext")
@@ -655,7 +892,7 @@ def linetext(req: LineReq):
 def line(req: LineReq):
     """Improvise a line AND speak it (kept for callers that want one shot)."""
     text = _improv_line(req.voice, (req.type or "").strip(), req.lang)
-    wav, meta, drawls = _render(text, req.voice, req.mode, req.speed, req.space)
+    wav, meta, drawls = _render(text, req.voice, req.mode, req.speed, req.space, lang=req.lang)
     return _audio_response(wav, meta, drawls, {"X-Bag-Line": quote(text)})
 
 
@@ -709,7 +946,7 @@ async def converse(audio: UploadFile = File(...), voice: str = Form(DEFAULT_VOIC
                             status_code=200)
     v = VOICES.get(voice, VOICES[DEFAULT_VOICE])
     reply = _llm_reply(heard, _persona(v, lang))
-    wav, meta, drawls = _render(reply, voice, mode)
+    wav, meta, drawls = _render(reply, voice, mode, lang=lang)
     return _audio_response(wav, meta, drawls,
                            {"X-Bag-Heard": quote(heard), "X-Bag-Reply": quote(reply)})
 
@@ -717,6 +954,13 @@ async def converse(audio: UploadFile = File(...), voice: str = Form(DEFAULT_VOIC
 @app.on_event("startup")
 def _warm():
     elongation.load()          # pull the MMS aligner into memory once
+
+    def _ping_llm():           # load the brain now, not on the first click
+        try:
+            _llm_reply("Ahoj.", "Odpovedz jedným slovom.", None, temperature=0.1, num_predict=3)
+        except Exception:      # noqa: BLE001
+            pass
+    threading.Thread(target=_ping_llm, daemon=True).start()
 
 
 @app.get("/healthz")

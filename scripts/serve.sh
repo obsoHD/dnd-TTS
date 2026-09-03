@@ -16,6 +16,7 @@ GPU="${GPU:-1}"
 docker rm -f bag-tts 2>/dev/null || true
 docker run -d --name bag-tts \
   --gpus all -e CUDA_VISIBLE_DEVICES="$GPU" \
+  -e SGLANG_OMNI_HIGGS_REF_CODE_CACHE=1 \
   -p "${PORT}:8000" \
   -v "${MODEL_DIR}:/model:ro" \
   -v "${REFS_DIR}:/refs:ro" \
