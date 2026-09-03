@@ -144,6 +144,10 @@ def _persona(v: dict, lang: str) -> str:
 VOICES = {
     "bag":    {"ref": "/refs/bag_ref.wav", "label": "Mr. Bag (deep male)",
                "pitch": "<|prosody:pitch_low|>", "band": (60, 155),
+               # cloned from a deliberate audiobook narrator: he inherits that
+               # pace, so bias him faster with the model's own speed tokens
+               "pace": {"default": "<|prosody:speed_fast|>",
+                        "fast": "<|prosody:speed_very_fast|>"},
                "persona": BAG_PERSONA, "persona_en": BAG_PERSONA_EN,
                "text": ("Popravia? Dostane tretí obed. Ak nie, mám ho ja. Stávka o "
                         "to, prečo človek zomrie? Je to zlodej, čo vyzerá ako zlodej? "
@@ -268,8 +272,8 @@ DEFAULT_MODE = "bro"
 # no published figure; Czech is the accepted proxy), slow/menacing 3.5-4.5,
 # hyped/furious/panic 6.5-7.5; English runs ~15% lower. Words/sec was wrong for
 # Slovak's long words and pinned every line at the cap.
-MODE_SPS = {"bro": 5.6, "deadpan": 5.2, "smug": 5.4, "pissed": 6.2,
-            "menace": 4.0, "panic": 6.4, "soft": 4.2}
+MODE_SPS = {"bro": 6.0, "deadpan": 5.4, "smug": 5.6, "pissed": 6.4,
+            "menace": 4.0, "panic": 6.6, "soft": 4.2}
 EN_RATE_SCALE = 0.85
 _VOW = "aeiouyáéíóúýäô"
 _SYL_DIPH = re.compile(r"i[aeu]|ô")
@@ -390,13 +394,22 @@ def _peak_normalize(pcm: bytes, target: float = 0.89) -> bytes:
     return struct.pack("<%dh" % n, *(max(-32768, min(32767, int(x * gain))) for x in s))
 
 
-def _trim(pcm: bytes, sr: int) -> bytes:
-    """Trim leading/trailing silence and clamp any runaway internal pause
-    (>1.2 s -> 0.7 s). Gentle: -55 dB threshold so quiet word endings survive,
-    and 300 ms of tail kept so the last word's natural decay is not chopped."""
+# max internal pause kept per delivery mode (s): hyped/furious modes snap,
+# menacing/soft modes are allowed to breathe
+MODE_PAUSE = {"bro": 0.30, "deadpan": 0.40, "smug": 0.35, "pissed": 0.28,
+              "menace": 0.60, "panic": 0.25, "soft": 0.55}
+
+
+def _trim(pcm: bytes, sr: int, keep_pause: float = 0.4) -> bytes:
+    """Trim leading/trailing silence and tighten internal pauses for dialogue:
+    the model parks long silences at commas and periods (~40% of a clip), so
+    any internal pause longer than keep_pause+0.1 s is shortened to keep_pause —
+    still a clear beat, no dead air. Gentle head/tail thresholds so quiet word
+    endings survive, and 300 ms of tail kept so the last word's decay stays."""
     af = ("silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.08,"
           "areverse,silenceremove=start_periods=1:start_threshold=-55dB:start_silence=0.30,"
-          "areverse,silenceremove=stop_periods=-1:stop_duration=1.2:stop_threshold=-50dB:stop_silence=0.7")
+          f"areverse,silenceremove=stop_periods=-1:stop_duration={keep_pause + 0.1:.2f}"
+          f":stop_threshold=-40dB:stop_silence={keep_pause:.2f}")
     cmd = ["ffmpeg", "-f", "s16le", "-ar", str(sr), "-ac", "1", "-i", "pipe:0",
            "-af", af, "-f", "s16le", "pipe:1"]
     return subprocess.run(cmd, input=pcm, stdout=subprocess.PIPE,
@@ -579,9 +592,10 @@ def _pace_sentences(chunk: str, pcm: bytes, sr: int, mode_key: str, applied,
             f, sps = 1.0, 0.0
         else:
             sps = syl / speech
-            # the model's own speed tokens carry the pace; post-stretch is only
-            # a small nudge — beyond ~6% speech time-stretch starts to sound worked
-            f = max(0.94, min(1.06, target_base * _cue(s) / sps))
+            # the model's own speed tokens carry the pace; post-stretch nudges.
+            # Speeding up is far more tolerant than slowing down, so allow
+            # +18% up but only -6% down; small dead-band.
+            f = max(0.94, min(1.22, target_base * _cue(s) / sps))
             if 0.97 <= f <= 1.03:
                 f = 1.0
         y = seg.astype(np.float32) / 32768.0
@@ -619,7 +633,14 @@ def _render(text: str, voice_key: str, mode_key: str,
     v = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
     m = MODES.get(mode_key, MODES[DEFAULT_MODE])
     spc = space if space is not None else m["space"]
-    lead = v["pitch"] + m["lead"]            # voice sets timbre, mode sets delivery
+    mlead = m["lead"]
+    pace = v.get("pace")
+    if pace:                                 # per-voice pace bias (slow narrator clones)
+        if "<|prosody:speed_fast|>" in mlead:
+            mlead = mlead.replace("<|prosody:speed_fast|>", pace["fast"])
+        elif "<|prosody:speed_" not in mlead:
+            mlead += pace["default"]
+    lead = v["pitch"] + mlead                # voice sets timbre, mode sets delivery
     if emotion:
         lead = f"<|emotion:{emotion}|>" + lead
 
@@ -661,7 +682,8 @@ def _render(text: str, voice_key: str, mode_key: str,
     if not parts:
         raise ValueError("nothing to say")
     meta["chunks"] = len(parts)
-    pcm = _trim((b"\x00\x00" * int(0.25 * sr)).join(parts), sr)
+    pcm = _trim((b"\x00\x00" * int(0.25 * sr)).join(parts), sr,
+                MODE_PAUSE.get(mode_key, 0.4))
 
     if speed is None:
         meta["adaptive_speed"] = round(float(np.mean(factors)), 2) if factors else 1.0
