@@ -83,3 +83,19 @@ fillers:
 f0_band:
 - 60
 - 155
+armed_spices:
+  vzdych:
+    sim_drop: -0.0042
+    min_sim: 0.9071
+    n: 20
+    armed_at: '2026-09-03T23:15:34+00:00'
+  pobavený:
+    sim_drop: -0.0012
+    min_sim: 0.9071
+    n: 20
+    armed_at: '2026-09-03T23:15:34+00:00'
+  smiech:
+    sim_drop: 0.0003
+    min_sim: 0.9071
+    n: 20
+    armed_at: '2026-09-03T23:15:34+00:00'

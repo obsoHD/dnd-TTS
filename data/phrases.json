@@ -11,7 +11,15 @@
     "No pozrime sa, kto sa dožil rána — môj obľúbený idiot. Poď bližšie, nech si ťa obzriem.",
     "Ahoj, kamoš. Zase smrdíš ako krčma — a predsa som rád, že si to ty.",
     "Vitaj späť, ty jedna chodiaca katastrofa. Chýbal si mi — asi tak pol minúty.",
-    "Servus, starý. Celý život ti nosím sračky — a stále ťa mám rád, debil."
+    "Servus, starý. Celý život ti nosím sračky — a stále ťa mám rád, debil.",
+    "Tak čo, žiješ? Škoda. Mal som už plán na tvoje veci.",
+    "Dobré ráno. A to hovorím ako vrece, ktoré nespí. Nikdy.",
+    "No konečne. Už som si myslel, že ťa niekto zožral — a že to bolo milosrdné.",
+    "Čau. Vyzeráš, akoby ťa prežula sova a vypľula späť.",
+    "Vitaj späť medzi živými. Bolo tu ticho a mne sa to nepáčilo.",
+    "Ahoj, kamoš. Ruku mi nedávaj, ja mám len otvor.",
+    "Zdravím ťa, ty chodiaca zlá pohoda. Poď, nech to máme za sebou.",
+    "Tak čo dnes? Zomrieme, alebo len utrpíme? Som zvedavý."
    ],
    "Urážka partie": [
     "Vy nie ste družina, vy ste kolektívna diagnóza.",
@@ -23,7 +31,15 @@
     "Pozrite sa na seba — celá družina a dokopy jeden mozog. A aj ten je požičaný.",
     "Videl som už kopec družín. Táto je prvá, ktorú by porazil aj prázdny vak.",
     "Ste ako lacné víno — smrdíte, nikto vás nechce a ráno z vás bolí hlava.",
-    "Vy nie ste družina. Vy ste pohrebná služba, ktorá zabudla, koho má pochovať."
+    "Vy nie ste družina. Vy ste pohrebná služba, ktorá zabudla, koho má pochovať.",
+    "Keby som mal oči, zatvorím ich. Toto sa nedá pozerať.",
+    "Vy nemáte plán. Vy máte zoznam spôsobov, ako zomrieť.",
+    "Trpaslík má sekeru, elf má luk, a vy dvaja máte nádej. To je slabá výbava.",
+    "Ja som vrece a mám lepší prehľad o situácii než celá vaša družina.",
+    "Vy sa nevoláte hrdinovia. Vy sa voláte svedkovia vlastnej hlúposti.",
+    "Rozprávate sa dve hodiny o dverách. O dverách! Sú otvorené.",
+    "Ak toto prežijeme, chcem iného majiteľa. Aj kamennú sochu beriem.",
+    "Máte odvahu, to áno. Rozum si zjavne nechal doma každý zvlášť."
    ],
    "Chvastanie po záchrane": [
     "A kto to zase zachránil? Vak. Ako vždy, do riti.",
@@ -35,7 +51,15 @@
     "A kto zase, kurva, zachránil situáciu? Vak — obyčajný kus kože a najlepší člen tejto družiny.",
     "Bez mojej fľaštičky by ste už kŕmili červy. Nie, nemusíte ďakovať — ale mohli by ste.",
     "Zapíšte si to do kroniky: hrdinovia plakali, vak konal — zase.",
-    "Roky sa cvičíte s mečmi a deň zachránila taška. Nech vám to pomaly dôjde."
+    "Roky sa cvičíte s mečmi a deň zachránila taška. Nech vám to pomaly dôjde.",
+    "Nepoďakujte sa. Vážne. Aj tak to poviem ja za vás.",
+    "Ja som vrece. Vy ste problém. A predsa som to vyriešil ja.",
+    "Toto si zapíšte: dnes vás zachránila taška. Taška!",
+    "Keď je zle, siahnete po mne. Keď je dobre, siahnete po pive. Chápem.",
+    "Kto mal to lano? Ja. Kto mal ten kľúč? Ja. Kto má tú slávu? Nikto. Ako vždy.",
+    "Ešte raz vás vytiahnem z hrobu a začnem si účtovať.",
+    "Videli ste to? Ja tiež nie, ale zvládol som to.",
+    "Boh na vás zabudol. Ja nie. Zapamätajte si, kto tu robí zázraky."
    ],
    "Odmietnutie predmetu": [
     "Lano? Naposledy si ho stratil v močiari. Nie.",
@@ -47,7 +71,15 @@
     "Lano ti nedám — naposledy si ním zviazal kobolda a spadol si do priepasti aj s ním.",
     "Fakľu ti nedám. Naposledy si ňou podpálil hostinec — a v ňom svoju vlastnú posteľ.",
     "Chceš liečivý elixír? Máš tridsať bodov života, chlapče — krvácaj ešte chvíľu, nič ti nebude.",
-    "Dýku ti nedám. Vieš, ako to dopadlo minule — ešte stále mám v podšívke dieru."
+    "Dýku ti nedám. Vieš, ako to dopadlo minule — ešte stále mám v podšívke dieru.",
+    "Nie. Toto si nesie niekto iný. Skús trpaslíka, ten unesie hanbu aj kameň.",
+    "Do mňa to nejde. Nie preto, že nemôžem — preto, že nechcem.",
+    "Toto smrdí. A ja hovorím o veciach, nie o tebe. Tentoraz.",
+    "Vyzerám ti ako smetiak? Nie? Tak to ani neskúšaj.",
+    "Ja mám vkus. Ty zjavne nie. Odpoveď je nie.",
+    "Táto vec je prekliata. Viem to. Cítim to. Nechaj ju tam.",
+    "Nie. A prestaň sa tváriť, že ma presvedčíš pohľadom.",
+    "Ber to takto: ja poviem nie a ty si ušetríš prst. Alebo dva."
    ],
    "Bojový pokrik": [
     "Do nich, kurva! Za vak a za slávu!",
@@ -59,7 +91,15 @@
     "Do nich! Kto prežije, nosí ma domov!",
     "Za družinu, za slávu — a hlavne za mňa!",
     "Vytiahnite meče, vy sráči! Dnes sa umiera nahlas!",
-    "Rozsekajte ich — a čo zostane, ide do vaku!"
+    "Rozsekajte ich — a čo zostane, ide do vaku!",
+    "Do nich! A keď zomriete, nepýtajte sa ma, prečo.",
+    "Tak poď, ty ohyzda! Máme celý deň a nič lepšie na práci!",
+    "Zbrane von, mozgy dnu — aj tak ich nepoužívate!",
+    "Za vak a za slávu! Hlavne za vak!",
+    "Teraz! Kým sa ešte boja! Alebo kým sa ešte boja oni, nie vy!",
+    "Bite prvý, plánujte potom. Vždy vám to takto vyšlo. Skoro vždy.",
+    "Ja nemám ruky, tak sekajte za mňa! Poďme!",
+    "Kto prežije, pije. Kto zomrie, ten aspoň nemusí platiť."
    ],
    "Sarkastická poznámka": [
     "Skvelý plán. Vojdeme dnu a uvidíme. Klasika.",
@@ -71,7 +111,15 @@
     "Skvelé, ideme do temnej jaskyne bez svetla. Čo by sa asi tak, kurva, mohlo pokaziť.",
     "Áno, určite, poďme sa rozdeliť. To ešte nikdy nikoho nezabilo.",
     "Vyjednávať s drakom — geniálne. Skoro taký dobrý nápad ako ten predchádzajúci.",
-    "Krásne, ďalšia páka, ktorú nikto nepreskúmal. Milujem prekvapenia — hlavne tie s hrotmi."
+    "Krásne, ďalšia páka, ktorú nikto nepreskúmal. Milujem prekvapenia — hlavne tie s hrotmi.",
+    "Skvelý nápad. Fakt. Ako vždy — presne taký, čo nás dostane do problémov.",
+    "Nie, nie, pokračuj. Toto sa mi počúva krásne.",
+    "Aha, takže máme plán. Alebo to bolo len hlasné dýchanie?",
+    "Ty si sa práve rozhodol. Ja som práve zostarol.",
+    "Určite. A ja som mešec plný draho.",
+    "Ako ti to len ide. Naozaj. Škoda, že nie tým smerom.",
+    "Toto skončí dobre. Povedal nikto, nikdy.",
+    "Áno, riskujme všetko. Veď čo už môže — nie, dopovedz si to sám."
    ],
    "Namrzené povzbudenie": [
     "Vstávaj, kokot. Ešte si nezdochol, tak dokonči robotu.",
@@ -83,7 +131,15 @@
     "Vstávaj, do riti. Ešte si nezomrel — a mŕtvoly nosím len za príplatok.",
     "Prestaň fňukať, zvládneš to. Nie preto, že ti verím — preto, že som to videl už stokrát.",
     "Fajn, si dobrý. Povedal som to nahlas — a teraz choď a dokáž, že som neklamal.",
-    "Hore hlavu, ty trosko. Horšie veci si prežil — väčšinou vlastnou vinou, ale prežil."
+    "Hore hlavu, ty trosko. Horšie veci si prežil — väčšinou vlastnou vinou, ale prežil.",
+    "Vstaň. Nie preto, že v teba verím. Preto, že ležíš mi v ceste.",
+    "Zvládneš to. Pravdepodobne. Nechaj mi tú nádej.",
+    "Nie si najhorší. To je z mojich úst poriadny kompliment.",
+    "Dýchaj. Potom sa hýb. V tomto poradí, prosím ťa.",
+    "Ešte krok. A ešte jeden. Vidíš? Ide to aj bez rozumu.",
+    "Nechaj tie reči o vzdaní. Nemám náladu ťa hľadať v priekope.",
+    "Si tvrdohlavý idiot — a to je práve to, čo dnes potrebujeme.",
+    "Ja tu s tebou zostávam. Nie z lásky. Z lenivosti. Ale zostávam."
    ],
    "Ten nie.": [
     "Všetko ostatné si vezmi. Ten nie.",
@@ -95,7 +151,14 @@
     "Vezmi si meč, lano, pokojne aj moju úctu — ale ten? Ten nie.",
     "Ó, pán zase siaha po tom jednom predmete — aké originálne. Ten nie.",
     "Poznám ťa od narodenia, presne viem, po čom siahaš. Ten nie.",
-    "Skúšal si prosby, hrozby aj plač — odpoveď sa nezmenila. Ten nie."
+    "Skúšal si prosby, hrozby aj plač — odpoveď sa nezmenila. Ten nie.",
+    "Ten nie. Ostatné hocijaké, ale ten nie.",
+    "Ten nie. A nepýtaj sa druhýkrát.",
+    "Nie ten. Ten je môj a bude môj.",
+    "Ten nie, kamoš. Ani za zlato, ani za pekné oči.",
+    "Ten nie. Toto je jediná vec, o ktorej sa nediskutuje.",
+    "Vezmi si čokoľvek. Naozaj hocičo. Len ten nie.",
+    "Ten nie. Choď preč od neho. Hneď."
    ]
   },
   "shopkeep": {
@@ -109,7 +172,15 @@
     "Vitajte, vitajte! Osud vás priviedol presne tam, kde sa plnia sny — a vyprázdňujú mešce!",
     "Poďte ďalej, poďte ďalej! Nebojte sa, hryzie len ten koberec — a aj ten iba občas!",
     "Ó, hrdina! Konečne niekto, kto vyzerá, že prežije aspoň do zaplatenia!",
-    "Vstúpte do môjho kráľovstva! Trón je za pultom, poklad na policiach — a kráľ som skromne ja!"
+    "Vstúpte do môjho kráľovstva! Trón je za pultom, poklad na policiach — a kráľ som skromne ja!",
+    "Dnu, dnu! Vonku je zima a vnútri je zľava!",
+    "Zákazník! Živý! Kde si bol celý môj život?",
+    "Vitaj, priateľu — a priateľmi sme od chvíle, čo máš mešec.",
+    "Ó! Ty vyzeráš na človeka, čo potrebuje presne to, čo mám!",
+    "Poď bližšie, nehryziem. Tovar občas áno, ale ten je v klietke.",
+    "Vitajte, hrdinovia! Alebo aspoň platiaci zákazníci, to je to isté!",
+    "Zavri za sebou! Teplo stojí peniaze a peniaze sú moje!",
+    "Práve som na teba myslel. Aj na tvoje zlato. Hlavne na tvoje zlato."
    ],
    "Tvrdý predaj": [
     "Kúp to hneď, lebo o minútu to kúpi tvoj nepriateľ!",
@@ -121,7 +192,15 @@
     "Kupujete, alebo umierate! Nie, to nie je hrozba — to je štatistika mojich zákazníkov bez brnenia!",
     "Počujete, ako váš mešec plače od samoty? Vysypte ho na pult — hneď mu bude ľahšie!",
     "Berte to hneď! Za minútu to kúpi tamten trpaslík a bude sa smiať — vám!",
-    "Ruku na to! Nie, nie na meč — na mešec, a rýchlo, kým sa spamätáte!"
+    "Ruku na to! Nie, nie na meč — na mešec, a rýchlo, kým sa spamätáte!",
+    "Toto nekupuješ ty. Toto kupuje tvoj osud. Ja som len prostredník.",
+    "Bez tohto zomrieš. S tým zomrieš neskôr. To je desať zlatiek rozdiel!",
+    "Ber dva. Prečo? Lebo jeden stratíš, poznám ťa.",
+    "Ja to nepredávam. Ja to zachraňujem pred zlými rukami — tvoje vyzerajú dobre.",
+    "Posledný kus! Vždy je posledný, keď stojíš predo mnou!",
+    "Nekupuj, prosím. Potom mi nechoď plakať na prah, keď ťa niečo zožerie.",
+    "Toto je investícia. Ak prežiješ, zarobíš. Ak nie — no, aspoň si to skúsil.",
+    "Kupujeme? Áno? Vidím to na tebe. Ty už si to kúpil vo svojej hlave."
    ],
    "Jednanie o cene": [
     "Desať zlatých? Ty ma chceš zabiť? Tridsať, a to plačem!",
@@ -133,7 +212,15 @@
     "Päť zlatých?! Za päť vám predám len ten úsmev, čo som mal, kým ste to povedali!",
     "Zľavu? Samozrejme — pôvodne som chcel dvadsať, teraz chcem dvadsať, ale s láskou!",
     "Stretneme sa na polceste! Vy prídete k mojej cene a ja tam už budem čakať.",
-    "Dobre, dobre, zrazím cenu o polovicu! Najskôr ju ale zdvojnásobím — pre poriadok."
+    "Dobre, dobre, zrazím cenu o polovicu! Najskôr ju ale zdvojnásobím — pre poriadok.",
+    "Zjednávaš? Ja mám rád, keď sa zjednáva. Znamená to, že kúpiš.",
+    "Dobre. Znížim ti cenu. A zvýšim cenu tomu vedľa. Rovnováha!",
+    "Za toľko? Priateľu, to bolí. Ale bolesť je súčasť obchodu.",
+    "Polovicu nedám. Dám ti dobrý pocit a tri zlatky dolu.",
+    "Ty tlačíš, ja tlačím, obaja sme šťastní a ja o kúsok šťastnejší.",
+    "Posledná cena. Naozaj posledná. No dobre, ešte jedna posledná.",
+    "Ak zaplatíš hneď, dám zľavu. Ak zajtra, dám ti dvakrát vyššiu cenu.",
+    "Zjednal si dobre. Nehovor to nikomu, zničíš mi povesť."
    ],
    "Nehorázna cena": [
     "Tisíc zlatých za lyžicu! Čisté striebro! Teda, strieborná farba.",
@@ -145,7 +232,15 @@
     "Tisíc zlatých za tento hrniec! Varil v ňom kráľ — teda kráľ krčmy, ale kráľ!",
     "Päťsto zlatých za lano! Je to obyčajné lano, áno, ale držalo ma nad priepasťou — cena je za spomienky!",
     "Dvesto zlatých za sviečku je lacné! Horí len raz — ale tak, že si to zapamätáte navždy!",
-    "Tristo zlatých za tento kameň! Nie je magický, ale je ťažký — a ťažké veci sú drahé, to vie každý!"
+    "Tristo zlatých za tento kameň! Nie je magický, ale je ťažký — a ťažké veci sú drahé, to vie každý!",
+    "Sto zlatiek. A to ti dávam rodinnú cenu, lebo si mi sympatický.",
+    "Drahé? Drahý je pohreb. Toto je lacné.",
+    "Cena je taká, lebo je to jediné. A jediné nemá konkurenciu.",
+    "Za túto cenu dostaneš aj môj obdiv. Zadarmo.",
+    "Viem, viem. Ale pozri sa naň! Pozri! Teraz mi povedz, že je to veľa.",
+    "Kto nemá zlato, ten má čas. Choď zarobiť a vráť sa. Počkám.",
+    "Toto stálo mňa krv. Teba to bude stáť len peniaze. Výhodný obchod!",
+    "Cena je konečná ako smrť. Rozdiel je, že smrť nezjednáva."
    ],
    "Vychvaľovanie tovaru": [
     "Tento meč je taký ostrý, že reže aj tvoje výhovorky!",
@@ -157,7 +252,15 @@
     "Tento meč je taký ostrý, že preťal aj moju nudu! A tá bola hrubá ako stehno trola!",
     "Tento plášť vás urobí neviditeľným! Teda nie celkom — ale ľudia vás budú ignorovať, a to je skoro to isté!",
     "Tieto čižmy prešli tisíc míľ a ani raz sa nesťažovali! Skúste to povedať o svojich nohách!",
-    "Tento elixír vylieči všetko! Bolesť, smútok, chudobu — tú moju hlavne, keď ho kúpite!"
+    "Tento elixír vylieči všetko! Bolesť, smútok, chudobu — tú moju hlavne, keď ho kúpite!",
+    "Toto ostrie prereže hodváb, kosť aj zlú náladu!",
+    "Kúzelný? Neviem. Ale svieti a ľudia sa uhýbajú. To stačí!",
+    "Vyrobené trpaslíkmi. Alebo niekým, kto videl trpaslíka. Detail!",
+    "Táto vec už zachránila troch ľudí. Štvrtý si to nekúpil. Škoda ho.",
+    "Vôňa? To je patina! Patina znamená históriu a história je drahá!",
+    "Skús to. Chyť to. Cítiš tú váhu? To je váha bezpečia!",
+    "Nosil to kráľ. Krátko, pravda. Ale nosil!",
+    "Toto ti prežije. Doslova. Ty zomrieš, toto zostane a niekto to zase kúpi!"
    ],
    "Zatváram krám": [
     "Von, von, všetci von! Zatváram! Peniaze nechajte na pulte!",
@@ -169,7 +272,15 @@
     "Von, von, všetci von! Zatváram, a kto zostane, toho predám ako tovar — bez zľavy!",
     "Koniec, zatvorené, hotovo! Peniaze nechajte na pulte, seba nechajte vonku!",
     "Slnko zapadá a s ním aj moja trpezlivosť! Kto nekúpil, nech odíde — kto kúpil, nech odíde rýchlejšie!",
-    "Zatváram! Ak nechcete nocovať s tou vecou, čo mi žije v pivnici, dvere sú tamto!"
+    "Zatváram! Ak nechcete nocovať s tou vecou, čo mi žije v pivnici, dvere sú tamto!",
+    "Zatváram! Vráť sa ráno a prines viac zlata ako dnes!",
+    "Krám sa zatvára, sny zostávajú. Aj ceny.",
+    "Von, von! Aj obchodník musí niekedy spať a rátať.",
+    "Posledný kupujúci, posledná zľava — a potom zhasínam!",
+    "Ešte jednu vec, dobre! Ale rýchlo, kým si to nerozmyslím!",
+    "Zajtra, priateľu. Zajtra bude tovar aj drahší, tak si privstaň.",
+    "Ja zatváram, ty odchádzaš. Peniaze môžeš nechať, tie tu môžu ostať.",
+    "Choď spať a sníval sa ti ten meč. Ráno si poň prídeš."
    ],
    "Podozrivá ponuka": [
     "Psst! Chceš prsteň? Trochu prekliaty, ale krásne sa leskne!",
@@ -181,14 +292,27 @@
     "Mám tu prsteň, ktorý predošlý majiteľ už nepotrebuje! Nepýtajte sa prečo — on už nepotrebuje vôbec nič.",
     "Chcete mapu k pokladu? Mám ich dvadsať, všetky pravé — a všetky vedú na to isté miesto!",
     "Tento elixír nebol testovaný na zvieratách! Na ľuďoch áno — a väčšina z nich sa vrátila!",
-    "Psst, mám niečo pod pultom! Nie je to kradnuté — iba to majiteľ ešte nestihol nahlásiť."
+    "Psst, mám niečo pod pultom! Nie je to kradnuté — iba to majiteľ ešte nestihol nahlásiť.",
+    "Toto som nepredával nikomu. Tebe áno. Nepýtaj sa prečo.",
+    "Bez otázok, bez mena, bez účtu. Klasika medzi priateľmi.",
+    "Prišlo to v noci. Odchádza to teraz. Ty to nikdy nevidel.",
+    "Nefunguje to vždy. Ale keď to funguje, funguje to veľmi.",
+    "Papiere? Tovar má papiere. Sú falošné, ale sú pekné.",
+    "Toto by som ti nemal ukazovať. Tak sa dobre pozri, kým to zabalím.",
+    "Kúpiš to a zabudneš na mňa. To je súčasť ceny.",
+    "Ak sa ťa niekto spýta, kúpil si to od vysokého chlapa. Bol tmavovlasý. Nebol som to ja."
    ],
    "Toto nepredám": [
     "Toto ti nepredám.",
     "Nie. Toto nie je na predaj. Ani za zlato, ani za tvoju dušu.",
     "Toto? Toto si nekúpiš. Ani ty, ani tvoja babka.",
     "Zabudni. Tento kus ide do rakvy so mnou.",
-    "Za toto ti nedám ani zlomený medenák. Ber alebo nechaj tak."
+    "Za toto ti nedám ani zlomený medenák. Ber alebo nechaj tak.",
+    "Toto nie. Toto zostáva tu, aj keby si doniesol vozík zlata.",
+    "Prosím ťa, čokoľvek iné. Toto nie.",
+    "Toto nie je tovar. Toto je spomienka. A tú nepredávam.",
+    "Nie. Nie. A keby si sa pýtal tretíkrát — stále nie.",
+    "Za toto by si mi musel priniesť môjho brata. Živého. Takže nie."
    ]
   },
   "npc": {
@@ -202,7 +326,15 @@
     "Vitajte v našom mestečku, kde sa každý príbeh začína pohárom — a končí dlhmi.",
     "Cudzia tvár v našich uliciach? Vitajte — a dávajte si pozor na vrecká.",
     "Vitajte! Konečne niekto s mečom a bez dlhov — prvý pohár platím ja.",
-    "Zdravím! Cesta vás priviedla až sem — dúfam, že aj vašu peňaženku."
+    "Zdravím! Cesta vás priviedla až sem — dúfam, že aj vašu peňaženku.",
+    "Zdravím vás. Cudzinci sú tu vzácni — a nie vždy vítaní.",
+    "Dobrý deň. Ak hľadáte nocľah, hostinec je za rohom.",
+    "Buďte pozdravení. Ruky nechajte tam, kde ich vidím.",
+    "Vitajte v našej dedine. Veľa toho nemáme, ale je to naše.",
+    "Zdravím. Ste z mesta? Vidno to na topánkach.",
+    "Dobrý večer. Neskoro chodia len tí, čo niečo hľadajú.",
+    "Zdravím vás, páni. A dámy. Prepáčte, slabo vidím.",
+    "Nech vás bohovia sprevádzajú. Aspoň niekto by mal."
    ],
    "Varovanie": [
     "Do lesa za mlynom nechoď. Vlci tam žerú aj kone.",
@@ -214,7 +346,15 @@
     "Za mlyn po zotmení nechoďte. Čo tam vojde — vráti sa už len v povestiach.",
     "Starý most vyzerá pevne — vyzerali tak aj tí, čo po ňom išli naposledy.",
     "V baniach sa niečo prebudilo. Baníci už nefajčia pred vchodom — modlia sa tam.",
-    "Vlci tento rok zišli z hôr skoro — a tí na dvoch nohách sú ešte horší."
+    "Vlci tento rok zišli z hôr skoro — a tí na dvoch nohách sú ešte horší.",
+    "Do lesa po zotmení nechoďte. Len toľko poviem.",
+    "Ak počujete zvon dvakrát, zamknite sa. Trikrát — utekajte.",
+    "Tá cesta je kratšia. Aj život je na nej kratší.",
+    "Nepite z tej studne. Odkedy tam niečo hodili, ľudia stonajú.",
+    "Starosta sa pýta na cudzincov. Ja som vás nevidel, dobre?",
+    "Ten dom obchádzajte. Nikto tam nebýva a predsa tam svieti.",
+    "Ak stretnete muža s pečaťou, mlčte. Aj o mne.",
+    "Vezmite si fakle. A viac, než si myslíte, že treba."
    ],
    "Klebeta z mesta": [
     "Vraj mlynárka čaká dieťa. Mlynár je pol roka na vojne.",
@@ -226,7 +366,15 @@
     "Vraj mlynárova žena chodí v noci na cintorín. Tvrdí, že za mužom — a ten ešte žije.",
     "Starosta si dal postaviť nový dom. Zaujímavé — presne v týždni, keď zmizla cechová pokladnica.",
     "Kováč vraj vykúva meč pre niekoho z hradu. Potichu, v noci — a platia mu striebrom, nie meďou.",
-    "Farár prestal kázať o hriechu. Vraj odkedy sa mu v pivnici našli tri sudy pašovaného vína."
+    "Farár prestal kázať o hriechu. Vraj odkedy sa mu v pivnici našli tri sudy pašovaného vína.",
+    "Vraj mlynárka nie je vdova. Vraj jej muž chodí domov. V noci.",
+    "Kováč prestal brať zákazky. Nikto nevie prečo a on nehovorí.",
+    "V hostinci sa zjavil chlap so zlatom. Odišiel bez zlata a bez topánok.",
+    "Deti hovoria o svetle nad kopcom. Dospelí sa tvária, že nič nevidia.",
+    "Daňový pisár tu bol dvakrát za mesiac. To nie je normálne.",
+    "Vraj v starej veži zas niekto býva. Vraj. Ja tam nechodím.",
+    "Kňaz odišiel a nechal otvorený chrám. To sa nerobí.",
+    "Hovorí sa, že karavána nezmizla. Že ju niekto pustil."
    ],
    "Ponuka úlohy": [
     "Potrebujem niekoho na potkany v pivnici. Veľké ako psy, platím zlatom.",
@@ -238,7 +386,15 @@
     "Potrebujem niekoho, kto dopraví balík do kláštora. Neotvárať, nepýtať sa — a nevracať sa bez pečate.",
     "Moja dcéra zmizla pri starej veži. Stráže tam nejdú — vy vyzeráte, že sa nebojíte alebo nemáte rozum.",
     "V pivnici mi niečo vrčí. Za desať strieborných zistite, čo — za dvadsať to aj zabite.",
-    "Hľadám sprievod ku karaváne na sever. Platím dobre, jedlo je zadarmo — a šípy tiež, len nie od nás."
+    "Hľadám sprievod ku karaváne na sever. Platím dobre, jedlo je zadarmo — a šípy tiež, len nie od nás.",
+    "Zaplatím, ak mi prinesiete späť to, čo mi vzali. Bez otázok.",
+    "V pivnici mám niečo, čo sa hýbe. Chcem, aby sa prestalo hýbať.",
+    "Môj brat odišiel pred týždňom. Nájdite ho. Aj keby už nežil.",
+    "Potrebujem sprievod do mesta. Cesta je zlá a ja som starý.",
+    "Vlk nám berie ovce. Prineste kožu, dostanete striebro.",
+    "Ak vyčistíte studňu, celá dedina vám bude dlžná. To je viac než zlato.",
+    "Niekto v noci kradne z chrámu. Chyťte ho vy, ja to nedokážem.",
+    "Doneste mi list do susednej dediny. Nečítajte ho. Vážne."
    ],
    "Krčmová reč": [
     "Toto pivo chutí ako konský moč. Ale lacný konský moč.",
@@ -250,7 +406,15 @@
     "Toto pivo je také slabé, že ho podávajú aj deťom — a tie sa sťažujú.",
     "Dedo vraj premohol medveďa holými rukami. Podľa mamy to bol jazvec — a prehral.",
     "Kedysi sem chodili rytieri a básnici. Dnes chodia len dlhy — a tie aspoň neodchádzajú.",
-    "Vravím vám, mesiac je čoraz bližšie. Každý večer ho vidím väčší — hlavne po piatom pohári."
+    "Vravím vám, mesiac je čoraz bližšie. Každý večer ho vidím väčší — hlavne po piatom pohári.",
+    "Ešte jedno? Ešte jedno. Aj tak zajtra oľutujem oboje.",
+    "Sadnite si. Pri stole sa lepšie klebetí ako na ulici.",
+    "Toto pivo je slabé, ale je lacné a ja som lacný človek.",
+    "Hrával som karty s tým chlapom. Nikdy nevyhral. Nikdy nezaplatil.",
+    "Hudobník je hrozný, ale hrá nahlas. To sa tu cení.",
+    "Ak chcete niečo vedieť, kúpte hostinskému pivo. Nie mne, ja hovorím zadarmo.",
+    "Kedysi tu bolo veselšie. Alebo som bol len mladší.",
+    "Na zdravie. Na vaše. To moje je už dávno preč."
    ],
    "Rozlúčka": [
     "Choď už, choď. A neumri, dlžíš mi za pivo.",
@@ -262,14 +426,27 @@
     "Šťastnú cestu! Ak sa vrátite, pijete zadarmo — ak nie, vypijem to na vašu pamiatku.",
     "Nech vás bohovia sprevádzajú. Ak nie oni — tak aspoň dobrý meč.",
     "Dovidenia! Dvere vám ostanú otvorené — ak prídete s peniazmi, nie s vojskom.",
-    "Choďte v pokoji! Vráťte sa s príbehmi — nie na nosidlách."
+    "Choďte v pokoji! Vráťte sa s príbehmi — nie na nosidlách.",
+    "Choďte s bohom. A rýchlo, kým je svetlo.",
+    "Ak sa vrátite, prineste správy. To je jediná mena, čo tu chýba.",
+    "Zbohom. Dvere necháme odomknuté, kým budeme môcť.",
+    "Nech vás cesta nesie ľahko. A nech je krátka.",
+    "Choďte. A na to, čo som povedal, zabudnite.",
+    "Držte sa. Toto nie je kraj pre neopatrných.",
+    "Dovidenia. Alebo aj nie — ako to už býva.",
+    "Ak nájdete môjho brata, povedzte mu, že som mu odpustil."
    ],
    "Choď do piče": [
     "Choď do piče.",
     "Nie. A teraz zmizni.",
     "Ani náhodou. Prac sa.",
     "Nechaj ma na pokoji, kým ťa niekto nepočuje.",
-    "Odpáľ. Nemám na teba ani čas, ani náladu."
+    "Odpáľ. Nemám na teba ani čas, ani náladu.",
+    "Nie. Zmizni skôr, než zavolám ľudí.",
+    "Choď do piče a nechoď späť.",
+    "Vypadni. Nemám pre teba slová ani čas.",
+    "Ani krok bližšie. Rozumel si?",
+    "Táto ulica ťa nechce. Ja tiež nie."
    ]
   }
  },
@@ -285,7 +462,15 @@
     "Well, well, look who survived the night — I had money on the goblins, honestly.",
     "Morning, sunshine. I've been awake since dawn holding your crap and reconsidering my choices.",
     "Oh good, you're back. Try not to bleed on me this time.",
-    "Hey, it's my favorite idiot. Don't let it go to your head — the competition is dead."
+    "Hey, it's my favorite idiot. Don't let it go to your head — the competition is dead.",
+    "Still breathing? Shame. I had plans for your things.",
+    "Morning. And I say that as a sack that never sleeps. Ever.",
+    "There he is. I was starting to hope something had eaten you.",
+    "Hello, walking disaster. You look like an owl chewed you and gave up.",
+    "Welcome back to the living. It was quiet and I hated it.",
+    "Hey. Don't offer me your hand, I've only got an opening.",
+    "Good to see you. That cost me something to say, so enjoy it.",
+    "So what's today? Dying, or only suffering? I'm curious."
    ],
    "Insult the party": [
     "Five of you, and not one working brain between you.",
@@ -297,7 +482,15 @@
     "You call yourselves a party? I've seen funerals with more energy and fewer fucking casualties.",
     "The wizard can't count, the rogue can't hide, and the paladin can't shut the fuck up.",
     "I've seen better tactics from a sack of potatoes — and I'd know, I've held one.",
-    "Congratulations, you're the first adventuring party the kobolds ever felt sorry for."
+    "Congratulations, you're the first adventuring party the kobolds ever felt sorry for.",
+    "If I had eyes I'd close them. This is unwatchable.",
+    "You don't have a plan. You have a list of ways to die.",
+    "I'm a bag and I have a better grip on this than the four of you.",
+    "You're not adventurers. You're witnesses to your own stupidity.",
+    "Two hours arguing about a door. It's open. It was always open.",
+    "Courage you have. The thinking part you all left at home, separately.",
+    "If we live through this I want a new owner. I'll take a statue.",
+    "The bard is the smart one. Let that sit with you for a moment."
    ],
    "Gloat after saving the day": [
     "Who pulled the rope? Say it with me: the fucking bag.",
@@ -309,7 +502,15 @@
     "Saved by luggage, again — put that in the fucking ballad.",
     "Who pulled the antidote, held the rope, and ended the day a hero? The bag — obviously the fucking bag.",
     "No hands, no legs, no problem — the bag saves the day again.",
-    "Say it with me: thank you, Mr. Bag. Louder — the dragon corpse can't hear you."
+    "Say it with me: thank you, Mr. Bag. Louder — the dragon corpse can't hear you.",
+    "Don't thank me. Really. I'll say it for you anyway.",
+    "I'm a bag. You're a problem. And I solved it.",
+    "Write this down: today you were saved by luggage.",
+    "When it's bad you reach for me. When it's good you reach for beer. Got it.",
+    "Who had the rope? Me. Who had the key? Me. Who gets the song? Nobody.",
+    "One more resurrection and I start charging by the corpse.",
+    "Did you see that? Neither did I. Still worked.",
+    "The gods forgot you. I didn't. Remember who does the miracles here."
    ],
    "Refuse an item": [
     "Rope? No, you'll just tie yourself to something stupid.",
@@ -321,7 +522,15 @@
     "The rope? No — last time you tied a knot, we buried a horse.",
     "You want the torch? Sure, right after you explain the last three barns.",
     "A bedroll, in the middle of a fight? Denied, you lazy shit.",
-    "Rations are for people who did something today. Ask me again after you kill something."
+    "Rations are for people who did something today. Ask me again after you kill something.",
+    "No. Someone else carries that. Try the dwarf, he carries shame already.",
+    "It's not going in. Not because I can't. Because I won't.",
+    "That reeks. And I mean the object. This time.",
+    "Do I look like a bin? No? Then don't.",
+    "That thing is cursed. I can feel it. Leave it where it lies.",
+    "No. And staring at me is not an argument.",
+    "Look at it this way: I say no, and you keep your fingers.",
+    "I have taste. You clearly don't. The answer is no."
    ],
    "Battle cry": [
     "Eat leather, motherfuckers!",
@@ -333,7 +542,15 @@
     "Nobody dies today except everyone I don't fucking like!",
     "Swing me, dammit — I've got a crowbar in here!",
     "For the loot, you bastards — for the fucking loot!",
-    "Hold onto your shit — Mr. Bag is coming through!"
+    "Hold onto your shit — Mr. Bag is coming through!",
+    "Get in there! And when you die, don't ask me why!",
+    "Come on then, ugly! We've got all day and nothing better!",
+    "Weapons out, brains in — you never use them anyway!",
+    "For the bag and the glory! Mostly the bag!",
+    "Now! While they're still scared! Or while you are, either works!",
+    "Hit first, plan later. It's worked before. Nearly.",
+    "I've got no hands, so swing for me! Move!",
+    "Whoever lives, drinks. Whoever dies, doesn't pay."
    ],
    "Sarcastic remark": [
     "Oh, splitting up in the dungeon. Never seen that go wrong.",
@@ -345,7 +562,15 @@
     "Oh, splitting up in a haunted crypt — bold, original, and it's never once ended in a funeral.",
     "Sure, poke the sleeping dragon with a stick. I'll start drafting the eulogies.",
     "Great plan — sneak past the guards in full plate. What could possibly clank?",
-    "Yes, drink the glowing mystery potion. I'm sure the skull on the label means friendly."
+    "Yes, drink the glowing mystery potion. I'm sure the skull on the label means friendly.",
+    "Great idea. Truly. Exactly the kind that gets us buried.",
+    "No, no, go on. I'm enjoying this enormously.",
+    "So we have a plan. Or was that just loud breathing?",
+    "You just made a decision. I just aged a decade.",
+    "Certainly. And I'm a purse full of gold.",
+    "You're doing so well. Really. Wrong direction, but well.",
+    "This ends beautifully. Said nobody, ever.",
+    "Yes, risk everything. What's the worst — no, you finish that one."
    ],
    "Grumpy encouragement": [
     "Get up. You're not dead, you're just whining.",
@@ -357,7 +582,15 @@
     "Get up. You've survived worse, mostly because I was there, so stop fucking whining.",
     "You can do this. Not well, not gracefully, but you can — now fucking move.",
     "Listen, I've held your shit for twenty years. I'm not carrying your corpse too — swing harder.",
-    "You're not the worst hero I've met. Low bar, sure, but you're clearing it — barely."
+    "You're not the worst hero I've met. Low bar, sure, but you're clearing it — barely.",
+    "Get up. Not because I believe in you. Because you're in my way.",
+    "You'll manage. Probably. Let me keep the hope.",
+    "You're not the worst. From me that's a parade.",
+    "Breathe. Then move. In that order, please.",
+    "One more step. And another. See? No thinking required.",
+    "Stop talking about quitting. I don't fancy hunting you down in a ditch.",
+    "You're a stubborn idiot, and that's precisely what today needs.",
+    "I'm staying. Not from love. From laziness. But I'm staying."
    ],
    "Not that one.": [
     "Take a sword, any sword. Not that one.",
@@ -369,7 +602,15 @@
     "The sword your father gave you, the one that ends this fight instantly? Not that one.",
     "Ask for anything else in here and it's yours, buddy. Not that one.",
     "The healing potion, in the middle of a fight, for a scratch like that? Not that one.",
-    "Sure, I've got a thousand things in here, and you pick the one I'm keeping. Not that one."
+    "Sure, I've got a thousand things in here, and you pick the one I'm keeping. Not that one.",
+    "Not that one. Anything else, but not that one.",
+    "Not that one. And don't ask twice.",
+    "Take everything else. Not that one.",
+    "That one's mine and it stays mine.",
+    "Not that one, friend. Not for gold, not for a smile.",
+    "Not that one. This is the one thing we don't discuss.",
+    "Take whatever you like. Truly, anything. Not that one.",
+    "Not that one. Step away from it. Now."
    ]
   },
   "shopkeep": {
@@ -383,7 +624,15 @@
     "Welcome, welcome, welcome! Wipe your boots, mind the cursed rug, and prepare to be dazzled!",
     "A customer at last! I've been talking to the mannequins for hours — they never buy anything.",
     "Come in, come in! Every hero needs a shop, and every shop needs a hero with coin!",
-    "Enter, brave traveler! Everything's for sale except the cat — and honestly, make me an offer."
+    "Enter, brave traveler! Everything's for sale except the cat — and honestly, make me an offer.",
+    "In, in! It's cold outside and there's a discount in here!",
+    "A customer! Alive! Where have you been all my life?",
+    "Welcome, friend — and we're friends the moment you have a purse.",
+    "You look like a man who needs exactly what I have!",
+    "Come closer, I don't bite. The stock does, but it's caged.",
+    "Shut the door! Warmth costs money and money is mine!",
+    "I was just thinking of you. And your gold. Mostly the gold.",
+    "Heroes! Or paying customers. Same thing in my ledger!"
    ],
    "Hard sell": [
     "Buy it now or regret it forever, possibly dead!",
@@ -395,7 +644,15 @@
     "Buy it now, buy it twice, buy one for your mother — she'd want you to!",
     "You need this sword! Without it you'll die, and dead people have terrible credit!",
     "Buy the shield now — the dragon outside isn't waiting for you to think it over!",
-    "Take it, take it, take it! I'll pry your purse open myself if I have to!"
+    "Take it, take it, take it! I'll pry your purse open myself if I have to!",
+    "You're not buying this. Your fate is. I'm the middleman.",
+    "Without it you die. With it you die later. That's ten gold of difference!",
+    "Take two. Why? You'll lose one, I know your sort.",
+    "Last one! It's always the last one when you're standing there!",
+    "Don't buy it, please. Then don't come crying to my door.",
+    "It's an investment. Live, and you profit. Die, and at least you tried.",
+    "Are we buying? Yes. I can see it. You've already bought it in your head.",
+    "I don't sell this. I rescue it from bad hands. Yours look fine."
    ],
    "Haggle over the price": [
     "Fifty?! My children have to eat, well, one of them!",
@@ -407,7 +664,15 @@
     "Fifty gold for this? My children will starve — well, my cat, but she eats like three children!",
     "Forty, and I'm bleeding! Thirty-eight, and you're a thief, but a thief I admire!",
     "Meet me halfway, friend — I'll come down ten gold and you come up twenty!",
-    "You drive a hard bargain! I drive a harder one, and mine has spikes!"
+    "You drive a hard bargain! I drive a harder one, and mine has spikes!",
+    "Haggling? I love a haggler. It means you're buying.",
+    "Fine. Down for you. Up for the next man. Balance!",
+    "That much? Friend, that hurts. But pain is part of trade.",
+    "Half, no. A good feeling and three gold off, yes.",
+    "You push, I push, we're both happy and I'm slightly happier.",
+    "Final price. Truly final. All right, one more final.",
+    "Pay now and you get the discount. Pay tomorrow and you get the lesson.",
+    "You haggled well. Don't tell anyone, you'll ruin me."
    ],
    "Outrageous price": [
     "Two thousand gold, it's been blessed! By me, just now!",
@@ -419,7 +684,15 @@
     "Nine hundred gold! Yes, for a spoon — but it's a spoon that's seen things!",
     "One thousand gold, and that's the friend price — enemies pay double and get bitten!",
     "Five hundred for the rope? Of course — it's been blessed, cursed, and blessed again!",
-    "Two thousand gold, firm! The dagger's ordinary, but the price is legendary!"
+    "Two thousand gold, firm! The dagger's ordinary, but the price is legendary!",
+    "A hundred gold. And that's the family price, because I like your face.",
+    "Expensive? A funeral is expensive. This is cheap.",
+    "The price is the price because it's the only one. The only one has no rivals.",
+    "At that price you also get my admiration. Free.",
+    "I know, I know. But look at it. Look! Now tell me it's too much.",
+    "No gold? Then you have time. Go earn some. I'll wait.",
+    "This cost me blood. It'll only cost you money. Bargain!",
+    "The price is as final as death. Death just doesn't haggle."
    ],
    "Praise the wares": [
     "This blade could shave a god! Not that I've tried!",
@@ -431,7 +704,15 @@
     "This blade is so sharp it cut my last customer's shadow clean off!",
     "Behold, the finest armor ever forged! Dragons weep, kings envy, and I've only lost two customers in it!",
     "This cloak is woven from moonlight, pure silk, and a lie or two — but magnificent lies!",
-    "Feel that boot leather! Softer than a baby's cheek and considerably harder to find!"
+    "Feel that boot leather! Softer than a baby's cheek and considerably harder to find!",
+    "This edge cuts silk, bone and a bad mood!",
+    "Magic? No idea. But it glows and people step aside. Good enough!",
+    "Dwarf-made. Or made by someone who has seen a dwarf. Details!",
+    "This saved three men. The fourth didn't buy. Poor soul.",
+    "The smell? That's patina! Patina is history and history is expensive!",
+    "Hold it. Feel that weight? That's the weight of not dying!",
+    "A king wore this. Briefly. But he wore it!",
+    "This will outlive you. Literally. You go, it stays, someone buys it again!"
    ],
    "Closing up shop": [
     "Buy something or get the hell out! We're closed!",
@@ -443,7 +724,15 @@
     "Out, out, out! The shop is closed, and the shop's owner needs a nap and a drink!",
     "Everybody out before the shutters drop — they drop fast, and I don't sweep up fingers!",
     "Closing time! Buy something on your way out or leave faster — those are the options!",
-    "Shoo, shoo! Even I have to sleep, and the mimics get hungry after dark!"
+    "Shoo, shoo! Even I have to sleep, and the mimics get hungry after dark!",
+    "Closing! Come back at dawn and bring more gold than today!",
+    "The shop closes, the dreams stay. So do the prices.",
+    "Out, out! Even a merchant must sleep and count.",
+    "Last buyer, last discount, then the lamps go out!",
+    "One more thing, fine! But quickly, before I change my mind!",
+    "Tomorrow, friend. Tomorrow it'll cost more, so rise early.",
+    "I close, you leave. The money may stay, the money is welcome.",
+    "Go to bed and dream of that sword. You'll come for it in the morning."
    ],
    "Suspicious offer": [
     "Psst, want a map? Its last owner won't be needing it.",
@@ -455,14 +744,27 @@
     "Psst — interested in a ring that whispers? Ignore the whispers, they're mostly about you.",
     "I've got a map to buried treasure — the treasure's mine, but the map's yours for fifty!",
     "Care for a potion of unknown effect? The last buyer was thrilled — or was it screaming?",
-    "This amulet is definitely not cursed, and I'll say that as many times as you need!"
+    "This amulet is definitely not cursed, and I'll say that as many times as you need!",
+    "I never sold this to anyone. To you, yes. Don't ask why.",
+    "No questions, no names, no receipt. Classic, between friends.",
+    "It came in at night. It leaves now. You never saw it.",
+    "It doesn't always work. But when it works, it works enormously.",
+    "Papers? It has papers. They're forged, but they're pretty.",
+    "I shouldn't be showing you this. So look well while I wrap it.",
+    "You buy it and you forget me. That's part of the price.",
+    "If anyone asks, you bought it from a tall man. Dark hair. Wasn't me."
    ],
    "Not selling that": [
     "I am not selling you that.",
     "No. That one is not for sale. Not for gold, not for your soul.",
     "That? You could not buy that. Not you, not your grandmother.",
     "Forget it. That piece goes in the coffin with me.",
-    "For that I would not give you a bent copper. Take it or leave it."
+    "For that I would not give you a bent copper. Take it or leave it.",
+    "Not that. That stays here, even for a cart of gold.",
+    "Please, anything else. Not that.",
+    "That isn't stock. That's a memory. I don't sell those.",
+    "No. No. And if you ask a third time, still no.",
+    "For that you'd have to bring me my brother. Alive. So, no."
    ]
   },
   "npc": {
@@ -476,7 +778,15 @@
     "Welcome, traveler! Wipe your boots — the floor remembers every sin dragged across it.",
     "Ah, a new face! Sit anywhere you like — except the chair the cat has claimed.",
     "Greetings, stranger! You look like trouble — the good kind, I hope, the paying kind.",
-    "Well met, adventurer! Half the town has been waiting for someone like you — the other half is hiding."
+    "Well met, adventurer! Half the town has been waiting for someone like you — the other half is hiding.",
+    "Good day. Strangers are rare here, and not always welcome.",
+    "Evening. If you want a bed, the inn is round the corner.",
+    "Well met. Keep your hands where I can see them.",
+    "Welcome to the village. We haven't much, but it's ours.",
+    "You're from the city. I can tell by the boots.",
+    "Late travellers are always looking for something.",
+    "Greetings, sirs. And ladies. Forgive me, my eyes are poor.",
+    "Gods keep you. Somebody ought to."
    ],
    "Warning": [
     "Don't go past the old mill. Nobody comes back with legs.",
@@ -488,7 +798,15 @@
     "Don't drink from the old well. The last one who tried now answers only to the moon.",
     "Mind the bridge — it holds three travelers, or one traveler with a guilty conscience.",
     "Something's stirring in the mines. The miners came up early — and the rats came up first.",
-    "Careful in the swamp. Everything there wants to eat you — even the flowers, especially the flowers."
+    "Careful in the swamp. Everything there wants to eat you — even the flowers, especially the flowers.",
+    "Don't go into the woods after dark. That's all I'll say.",
+    "Two bells, lock your door. Three bells, run.",
+    "That road is shorter. So is life on it.",
+    "Don't drink from that well. People have been sick since they threw something in.",
+    "The reeve is asking about strangers. I never saw you, understood?",
+    "Go around that house. Nobody lives there and yet it's lit.",
+    "If you meet a man with a seal, say nothing. Not about me either.",
+    "Take torches. More than you think you need."
    ],
    "Town gossip": [
     "The baker's been sneaking out to the miller's every damn night.",
@@ -500,7 +818,15 @@
     "The mayor bought a new hat. Nobody knows where the gold came from — the hat certainly isn't talking.",
     "The baker and the blacksmith are feuding again. This time it's over a goat — the goat seems flattered.",
     "They say the priest gambles at night. Mind you, they also say the priest wins — suspiciously often.",
-    "Old Marrow's chickens have stopped laying. Marrow blames the witch — the witch blames the chickens."
+    "Old Marrow's chickens have stopped laying. Marrow blames the witch — the witch blames the chickens.",
+    "They say the miller's wife is no widow. They say he comes home. At night.",
+    "The smith stopped taking work. Nobody knows why and he won't say.",
+    "A man with gold turned up at the inn. He left without the gold or his boots.",
+    "The children talk about a light on the hill. The grown-ups pretend not to see it.",
+    "The tax clerk has been here twice this month. That isn't normal.",
+    "They say somebody lives in the old tower again. I don't go up there.",
+    "The priest left and the chapel stands open. That isn't done.",
+    "They say the caravan didn't vanish. They say somebody let it go."
    ],
    "Quest offer": [
     "Rats in my cellar, big bastards. Fifty gold if they vanish.",
@@ -512,7 +838,15 @@
     "I need a package delivered to the tower. Don't open it, don't shake it — and don't let it hum.",
     "Fifty gold to find my missing cousin. A hundred if you bring them back sober.",
     "Wolves are terrorizing the farms. Clear them out — the sheep will be grateful, in their way.",
-    "Escort my caravan to the pass. Pay is good, food is better — the bandits, sadly, are excellent."
+    "Escort my caravan to the pass. Pay is good, food is better — the bandits, sadly, are excellent.",
+    "I'll pay if you bring back what they took. No questions.",
+    "There's something moving in my cellar. I want it to stop moving.",
+    "My brother left a week ago. Find him. Even if he's dead.",
+    "I need an escort to the city. The road is bad and I'm old.",
+    "A wolf is taking our sheep. Bring the pelt, take the silver.",
+    "Clear the well and the whole village owes you. That's worth more than gold.",
+    "Someone robs the chapel at night. You catch him, I can't.",
+    "Carry a letter to the next village. Don't read it. I mean it."
    ],
    "Tavern talk": [
     "Another round? 'Course you do, your liver's not my problem.",
@@ -524,7 +858,15 @@
     "Another round! My coin's good tonight — tomorrow it belongs to whoever I owe.",
     "This ale tastes like it was brewed in a boot. A good boot, mind you — I'd drink it again.",
     "Once fought a troll with nothing but a spoon. Lost the spoon, kept the story — fair trade.",
-    "The bard's on their third song about heartbreak. Any more and the whole tavern will need healing."
+    "The bard's on their third song about heartbreak. Any more and the whole tavern will need healing.",
+    "Another? Another. I'll regret both tomorrow.",
+    "Sit down. Gossip goes better at a table than in the street.",
+    "This ale is weak, but it's cheap, and so am I.",
+    "I played cards with that man. Never won. Never paid.",
+    "The musician is terrible, but he's loud. That counts here.",
+    "Want to know something, buy the innkeeper a drink. Not me, I talk free.",
+    "It used to be merrier here. Or I was younger.",
+    "Your health. Mine went long ago."
    ],
    "Farewell": [
     "Safe travels. Try to come back with all your limbs.",
@@ -536,14 +878,27 @@
     "Safe travels! Come back with gold, or come back with stories — both spend here.",
     "Off you go, then. Try not to die — it's terrible for repeat business.",
     "Farewell, friend! Keep your blade sharp and your wits sharper — one of them will rust anyway.",
-    "Go on, the road's waiting. It's been waiting for years — it's very patient, unlike me."
+    "Go on, the road's waiting. It's been waiting for years — it's very patient, unlike me.",
+    "Go with the gods. And quickly, while there's light.",
+    "If you come back, bring news. It's the one coin we're short of.",
+    "Farewell. We'll leave the door unbarred as long as we can.",
+    "May the road be kind. And short.",
+    "Go. And forget what I told you.",
+    "Keep your wits. This is no country for the careless.",
+    "Goodbye. Or not, as it usually goes.",
+    "If you find my brother, tell him he's forgiven."
    ],
    "Piss off": [
     "Piss off.",
     "No. Now get lost.",
     "Not a chance. Move along.",
     "Leave me be, before someone hears you.",
-    "Clear off. I have neither the time nor the mood for you."
+    "Clear off. I have neither the time nor the mood for you.",
+    "No. Clear off before I call the others.",
+    "Get away from me and don't come back.",
+    "Out. I've no words for you and no time.",
+    "Not another step. Understood?",
+    "This street doesn't want you. Nor do I."
    ]
   }
  }
