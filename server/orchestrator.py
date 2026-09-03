@@ -807,25 +807,23 @@ def _render(text: str, voice_key: str, mode_key: str,
         exp_sec = _syllables(_spoken(clean)) / (MODE_SPS.get(part_mode, 5.4)
                                                  * (EN_RATE_SCALE if _is_en(lang) else 1.0))
 
-        def _score(c):
+        def _score(c):                      # cheap: pitch centre + duration vs expected
             cpcm, csr, cm = c
-            cer = _asr_cer(cpcm, csr, clean, lang) if ASR_GATE else 0.0
             dur = max(0.2, _speech_seconds(cpcm, csr))
-            sc = 3.0 * cer + 0.5 * abs(cm["hz"] - mid) / mid + abs(math.log(dur / max(0.2, exp_sec)))
-            return sc, cer
+            return 0.5 * abs(cm["hz"] - mid) / mid + abs(math.log(dur / max(0.2, exp_sec)))
 
-        if len(cands) > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cands)) as ex:
-                scored = list(zip(ex.map(_score, cands), cands))
-        else:
-            scored = [(_score(c), c) for c in cands]
-        (sc, cer), (pcm, sr, cmeta) = min(scored, key=lambda t: t[0][0])
-        if ASR_GATE and cer > ASR_CER_MAX and len(scored) < 3:   # still garbled: one more take
-            alt = ((cmeta.get("accepted_seed") or 0) + 3) % MAX_TRIES
-            for c in voice_gen(_place_tags(lead, clean), vv, max_tokens, alt, 1):
-                sc2, cer2 = _score(c)
-                if sc2 < sc:
-                    (sc, cer), (pcm, sr, cmeta) = (sc2, cer2), c
+        scored = sorted(((_score(c), c) for c in cands), key=lambda t: t[0])
+        sc, (pcm, sr, cmeta) = scored[0]
+        cer = _asr_cer(pcm, sr, clean, lang) if ASR_GATE else 0.0   # whisper once, on the winner
+        if ASR_GATE and cer > ASR_CER_MAX:  # garbled: try the runner-up, then one fresh take
+            pool = [c for _, c in scored[1:]]
+            if not pool:
+                alt = ((cmeta.get("accepted_seed") or 0) + 3) % MAX_TRIES
+                pool = voice_gen(_place_tags(lead, clean), vv, max_tokens, alt, 1)
+            for c in pool[:1]:
+                cer2 = _asr_cer(c[0], c[1], clean, lang)
+                if cer2 < cer:
+                    (pcm, sr, cmeta), cer = c, cer2
         cmeta["cer"] = cer
         cmeta["candidates"] = len(scored)
         cmeta["score"] = round(sc, 3)
@@ -913,49 +911,42 @@ def _audio_response(wav, meta, drawls, extra=None) -> Response:
     return Response(content=wav, media_type="audio/wav", headers=headers)
 
 
-_llm_check = {"t": 0.0}
+_llm_check = {"t": 0.0, "model": None}
+LLM_FALLBACKS = [m.strip() for m in os.environ.get("BAG_LLM_FALLBACKS", "qwen3:14b").split(",") if m.strip()]
 
 
-def _llm_on_gpu() -> bool:
-    """Is Bag's model loaded AND (>=90%) GPU-resident? Another app's model can
-    displace it to CPU, where a 27B answers in 50-90 s instead of <1 s."""
+def _resident_models() -> dict:
+    """{name: gpu_fraction} of models ollama currently holds."""
     try:
-        ps = requests.get(LLM_URL + "/api/ps", timeout=5).json().get("models", [])
+        ps = requests.get(LLM_URL + "/api/ps", timeout=4).json().get("models", [])
     except Exception:                                   # noqa: BLE001
-        return True                                     # can't tell; don't block
-    for m in ps:
-        if LLM_MODEL in (m.get("name"), m.get("model")):
-            return m.get("size_vram", 0) >= 0.9 * max(1, m.get("size", 1))
-    return False
+        return {}
+    return {m.get("name") or m.get("model"): m.get("size_vram", 0) / max(1, m.get("size", 1)) for m in ps}
 
 
-def _ensure_llm_gpu():
-    """Work WITH the lifeos scheduler: if our brain got displaced, ask the
-    broker for GPU 0 VRAM (it unloads idle, non-pinned ollama models first —
-    its own policy; Bag's model is pinned), then reload ours onto the GPU.
-    Checked at most every 30 s so it costs nothing on the normal path."""
+def _pick_model() -> str:
+    """Bag's own model if it is GPU-resident; else a resident fallback (lifeos
+    keeps qwen3:14b pinned — plenty for the director's JSON); else Bag's model
+    (cold load). Cached for 10 s. GPU 0 is shared with lifeos: a cold 27B load
+    is 15-90 s, so a resident 14B beats a better model that is not there."""
     now = time.time()
-    if now - _llm_check["t"] < 30:
-        return
-    _llm_check["t"] = now
-    if _llm_on_gpu():
-        return
-    try:
-        requests.post(BROKER_URL + "/broker/request-vram", timeout=90,
-                      json={"amount_mb": 18000, "requester": "bag", "gpu": 0})
-        requests.post(LLM_URL + "/api/generate", timeout=30,      # unload -> re-place
-                      json={"model": LLM_MODEL, "keep_alive": 0, "prompt": ""})
-        requests.post(LLM_URL + "/api/generate", timeout=240,     # reload on the GPU
-                      json={"model": LLM_MODEL, "keep_alive": -1, "prompt": "",
-                            "options": {"num_ctx": 4096}})
-    except Exception:                                   # noqa: BLE001
-        pass
+    if now - _llm_check["t"] < 10 and _llm_check["model"]:
+        return _llm_check["model"]
+    res = _resident_models()
+    choice = LLM_MODEL
+    if res.get(LLM_MODEL, 0) < 0.9:
+        for fb in LLM_FALLBACKS:
+            if res.get(fb, 0) >= 0.9:
+                choice = fb
+                break
+    _llm_check.update(t=now, model=choice)
+    return choice
 
 
 def _llm_reply(user_text: str, persona: str, history=None,
                temperature=0.85, num_predict=180, json_mode=False) -> str:
-    """The LLM via ollama, in persona, kept short. Warm-pinned via keep_alive."""
-    _ensure_llm_gpu()
+    """The LLM via ollama, in persona, kept short. Uses a resident model."""
+    model = _pick_model()
     msgs = [{"role": "system", "content": persona}]
     for h in (history or [])[-8:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
@@ -964,8 +955,9 @@ def _llm_reply(user_text: str, persona: str, history=None,
     txt = ""
     for attempt in range(2):                     # the model occasionally returns ""
         r = requests.post(LLM_URL + "/api/chat", timeout=180, json={
-            "model": LLM_MODEL, "messages": msgs, "stream": False,
+            "model": model, "messages": msgs, "stream": False,
             **({"format": "json"} if json_mode else {}),
+            **({"think": False} if "qwen3" in model else {}),   # no <think> preamble
             "keep_alive": -1,           # stay resident: a cold reload is ~90 s
             "think": False,             # Qwen3: no reasoning trace, just the line
             "options": {"temperature": temperature if attempt == 0 else 0.7,
