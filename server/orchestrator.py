@@ -347,7 +347,7 @@ def _syllables(text: str) -> int:
     for w in re.findall(r"[a-záéíóúýäôčšžťďňľŕĺ']+", text.lower()):
         v = sum(1 for ch in w if ch in _VOW) - len(_SYL_DIPH.findall(w))
         rl = len(_SYL_RL.findall(w))
-        n += (v + rl) if v > 0 else (rl or 1)
+        n += (v + rl) if v > 0 else rl        # vowel-less clitics (z, v, k, s) are not syllables
     return max(1, n)
 
 
@@ -502,7 +502,13 @@ def _speech_seconds(pcm: bytes, sr: int, floor_db: float = -40.0) -> float:
         return x.size / sr
     n = x.size // hop
     rms = np.sqrt(np.mean(x[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
-    return float(np.count_nonzero(20 * np.log10(rms) > floor_db)) * hop / sr
+    db = 20 * np.log10(rms)
+    # peak-RELATIVE gate: raw generations are quiet before loudness
+    # normalisation, so an absolute -40 dBFS threshold counted much of the
+    # speech as silence, overestimated the articulation rate and made the
+    # adaptive speed-up under-fire. Speech = within 32 dB of the loudest frame.
+    thr = max(float(db.max()) - 32.0, -60.0)
+    return float(np.count_nonzero(db > thr)) * hop / sr
 
 
 # Real reverbs (Freeverb-class algorithm via pedalboard), not an echo filter.
