@@ -1,0 +1,21 @@
+# HTTPS in front of the app, for one reason: the browser hides
+# navigator.mediaDevices outside a secure context, so on plain http://<lan-ip>
+# the output-device picker cannot exist at all. Caddy's internal CA issues the
+# certificate; the first visit warns once, and installing the CA on the laptop
+# (docker cp bag-tls:/data/caddy/pki/authorities/local/root.crt .) removes even
+# that. Port 8020 keeps serving plain HTTP, so nothing that already works breaks.
+{
+	auto_https disable_redirects
+	admin off
+}
+
+:8443 {
+	tls internal
+	reverse_proxy 127.0.0.1:8020 {
+		# The Play and Speaker pages hold a WebSocket for the whole session.
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

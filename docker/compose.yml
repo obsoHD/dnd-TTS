@@ -30,6 +30,19 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+  # HTTPS front for the app. WHY it exists: browsers expose
+  # navigator.mediaDevices only in a secure context, so the speaker-output
+  # picker is invisible over plain http on the LAN. Plain :8020 keeps working.
+  tls:
+    image: caddy:2-alpine
+    container_name: bag-tls
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ${HOME}/dnd-tts/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${HOME}/dnd-tts/cache/caddy:/data
+    depends_on: [app]
+
   app:
     build:
       context: ..

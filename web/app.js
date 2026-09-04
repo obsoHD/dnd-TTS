@@ -27,6 +27,9 @@ const FLASH_MS = 1500;       // how long a freshly saved tile keeps its ring
 const CONFIRM_MS = 4000;     // an armed Delete disarms itself: no tile is left one stray tap from gone
 /** Where a saved line lands. The server owns the default; this is only how a tile is read back. */
 const SAVED_CATEGORY = { sk: 'Moje', en: 'Mine' };
+/** Per page, not per browser: the Play page and the Speaker page are different clients and may
+ *  well sit on different machines, so one of them choosing an output says nothing about the other. */
+const SINK_KEY = 'bag.sink.play';
 const audio = document.getElementById('audio');
 
 /* ---------------- helpers ---------------- */
@@ -117,6 +120,47 @@ function armAudio(el) {
   };
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock);
+}
+
+/* ---------------- audio output device ---------------- */
+
+/** Routing needs both halves of the API and neither is everywhere (an insecure origin has no
+ *  `mediaDevices` at all). Without both the picker is never rendered and the element keeps
+ *  whatever output the system gives it, exactly as before. */
+const canRoute = () => typeof navigator.mediaDevices?.enumerateDevices === 'function'
+  && typeof audio.setSinkId === 'function';
+
+function storedSink() {
+  try { return localStorage.getItem(SINK_KEY) || ''; } catch { return ''; }   // private mode: system default
+}
+
+function storeSink(id) {
+  try { if (id) localStorage.setItem(SINK_KEY, id); else localStorage.removeItem(SINK_KEY); } catch { /* ignore */ }
+}
+
+/** Devices with no id are the browser's placeholder for "you may not know yet"; they would
+ *  show up as a second, nameless copy of the default entry, so they are dropped here. */
+async function listOutputs() {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all.filter((d) => d.kind === 'audiooutput' && d.deviceId);
+  } catch { return []; }
+}
+
+/** '' is the system default. A refused route is swallowed on purpose: a device that will not
+ *  take the audio must not take the playback down with it. */
+async function routeAudio(el, id) {
+  try { await el.setSinkId(id); return true; } catch { return false; }
+}
+
+/** Output labels stay blank until the page has microphone permission. The stream is opened only
+ *  to earn the names and is stopped in the same breath: this app never holds a live microphone. */
+async function askDeviceNames() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    return true;
+  } catch { return false; }
 }
 
 const isTyping = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
@@ -230,11 +274,22 @@ function dropLine(jobs, lineId) {
   return Object.fromEntries(Object.entries(jobs).filter(([, j]) => j.line_id !== lineId));
 }
 
+/** A prepared render belongs to one exact line. The moment the text, the voice, the language or
+ *  the delivery moves, that audio is no longer what the box says, so the arm is gone: comparing
+ *  what was prepared beats a flag that every one of those four changes would have to remember to clear. */
+function armedRender(prepared, s) {
+  if (!prepared) return null;
+  const same = prepared.text === s.text.trim() && prepared.voice === s.voice?.id
+    && prepared.lang === s.lang && prepared.delivery === s.delivery;
+  return same ? prepared : null;
+}
+
 /** One banner at a time, worst problem first. */
 function bannerFor(wsUp, ready, player) {
   if (!wsUp) return ['bad', 'connection lost: reconnecting'];
   if (ready && ready.tts === false) return ['bad', 'TTS down: cached lines only'];
-  if (player && !player.speaker) return ['warn', 'no speaker connected (playing here)'];
+  // every connected page plays when the claim is free, which is what an "echo" across two open tabs really is
+  if (player && !player.speaker) return ['warn', 'no speaker connected (playing here, and on every open page)'];
   if (ready && ready.stt === false) return ['warn', 'whisper down: lines unverified'];
   return null;
 }
@@ -243,7 +298,23 @@ function bannerFor(wsUp, ready, player) {
 
 const Dot = ({ label, state }) => html`<span class="dot ${state}" title=${label}><span class="lbl">${label}</span></span>`;
 
-function TopBar({ voice, ready, speaker, queued, pending, onStop }) {
+/** Which speaker the audio leaves by. Own class names, because it hangs downward out of the top
+ *  bar while the delivery popover hangs upward out of the sticky footer; sharing `.dpop` would
+ *  make one of the two open off screen. */
+function SinkPill({ devices, value, open, named, denied, onToggle, onPick, onAskNames }) {
+  return html`<div class="sink">
+    <button class="ssel ${value ? 'on' : ''}" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
+      aria-label="zvukový výstup" title="zvukový výstup" onClick=${onToggle}><${SpeakerIcon} /></button>
+    ${open && html`<div class="spop" role="menu">
+      ${!named && !denied && html`<button class="sopt ask" role="menuitem" onClick=${onAskNames}>povoliť názvy zariadení</button>`}
+      <button class="sopt ${value ? '' : 'on'}" role="menuitem" onClick=${() => onPick('')}>Predvolené</button>
+      ${devices.map((d, i) => html`<button key=${d.deviceId} class="sopt ${d.deviceId === value ? 'on' : ''}"
+        role="menuitem" onClick=${() => onPick(d.deviceId)}>${d.label || `Zariadenie ${i + 1}`}</button>`)}
+    </div>`}
+  </div>`;
+}
+
+function TopBar({ voice, ready, speaker, queued, pending, sink, onStop }) {
   const tts = !ready?.tts ? '' : ready.tts_warm === false ? 'warm' : 'on';
   const llm = ready?.llm === 'resident' || ready?.llm === true ? 'on' : '';
   return html`<header class="top">
@@ -255,6 +326,7 @@ function TopBar({ voice, ready, speaker, queued, pending, onStop }) {
       <${Dot} label="brain" state=${llm} />
       <${Dot} label="speaker" state=${speaker ? 'on' : ''} />
     </span>
+    ${sink && html`<${SinkPill} ...${sink} />`}
     <span class="qcount">render ${queued}${pending ? ` / play ${pending}` : ''}</span>
     <button class="stop" onClick=${onStop} title="Stop (Esc)">STOP</button>
   </header>`;
@@ -362,6 +434,12 @@ const Gear = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
         fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
 </svg>`;
 
+const SpeakerIcon = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M4 9.3h3.4L12 5.2v13.6L7.4 14.7H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+  <path d="M15.6 9.4a3.8 3.8 0 010 5.2M18.2 6.9a7.4 7.4 0 010 10.2"
+        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+</svg>`;
+
 /** The gear opens the delivery menu; the popover shows every spice so the DM can see the mechanism, armed or not. */
 function DeliveryPill({ items, value, open, onToggle, onPick }) {
   const current = items.find((d) => d.id === value);
@@ -373,7 +451,8 @@ function DeliveryPill({ items, value, open, onToggle, onPick }) {
 }
 
 /** Returns an array so the ghost line sits under the bar without nesting it inside the flex row. */
-function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fixUndo, fixNote, brainDown, boxRef,
+function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fixUndo, fixNote, brainDown,
+                    armed, preparing, boxRef,
                     onText, onLang, onSpeak, onSave, onDelivery, onDeliveryToggle, onFix, onUndo }) {
   const undoKey = (e) => {
     if (!e.ctrlKey || e.key.toLowerCase() !== 'z' || fixUndo === null) return;
@@ -383,9 +462,9 @@ function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fix
   return [
     html`<div class="improv">
       <input class="line" type="text" maxlength=${LIMIT} autocomplete="off" spellcheck="false"
-        placeholder="type a line, Enter speaks" value=${text} readOnly=${fixing} ref=${boxRef}
+        placeholder="type a line, Enter prepares, Enter again plays" value=${text} readOnly=${fixing} ref=${boxRef}
         onInput=${(e) => onText(e.target.value)} onKeyDown=${undoKey} />
-      <button class="fix" title="Opraviť (Ctrl+Enter opraví a povie)" aria-label="opraviť"
+      <button class="fix" title="Opraviť (Ctrl+Enter opraví a pripraví)" aria-label="opraviť"
         disabled=${fixing || brainDown || !text.trim()} onClick=${onFix}>
         ${fixing ? html`<span class="spin"></span>` : html`<${Pencil} />`}
       </button>
@@ -396,7 +475,9 @@ function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fix
         onToggle=${onDeliveryToggle} onPick=${onDelivery} />
       <span class="pills">${LANGS.map((l) => html`
         <button key=${l} class="pill ${l === lang ? 'on' : ''}" onClick=${() => onLang(l)}>${l.toUpperCase()}</button>`)}</span>
-      <button class="speak" disabled=${!text.trim()} onClick=${onSpeak}>Speak</button>
+      <button class="speak ${armed ? 'armed' : ''}" disabled=${preparing || !text.trim()}
+        title=${armed ? 'pripravené — stlačením sa prehrá' : 'pripraviť (Enter)'}
+        onClick=${onSpeak}>${preparing ? html`<span class="spin"></span>` : 'Speak'}</button>
     </div>`,
     (fixUndo !== null || fixNote) && html`<div class="fixline">
       ${fixUndo !== null
@@ -435,6 +516,11 @@ class App extends Component {
     // improv bar: the chosen delivery for the active voice, and the pencil's one-shot undo
     deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false,
     fixing: false, fixUndo: null, fixNote: null, brainDown: false,
+    // Speak in two stages: `preparing` is the render in flight, `prepared` is what came back
+    // (text, voice, lang, delivery, render_id) so the arm can be checked against the box
+    preparing: null, prepared: null, prepareJob: null,
+    // the audio output picker: absent browsers never render it, so `sinkOk` is decided once
+    sinkOk: canRoute(), sinks: [], sink: storedSink(), sinkOpen: false, sinkNamed: true, sinkDenied: false,
     // one-shot tile marks: the saved tile's flash, the edited tile's pulse, the armed Delete,
     // and the one tile whose "tón" menu is open
     flash: null, pulse: null, confirmDelete: null, tonePick: null,
@@ -450,9 +536,15 @@ class App extends Component {
     // pointerdown, not click: the popover must be gone before the press lands anywhere else
     window.addEventListener('pointerdown', (e) => {
       if (this.state.deliveryOpen && !e.target.closest?.('.delivery')) this.setState({ deliveryOpen: false });
+      if (this.state.sinkOpen && !e.target.closest?.('.sink')) this.setState({ sinkOpen: false });
       if (this.state.confirmDelete && !e.target.closest?.('.own')) this.setState({ confirmDelete: null });
       if (this.state.tonePick && !e.target.closest?.('.own')) this.setState({ tonePick: null });
     });
+    if (this.state.sinkOk) {
+      this.refreshSinks();
+      // unplugging the JBL invalidates the stored id, so the list and the routing are re-made on the spot
+      navigator.mediaDevices.addEventListener?.('devicechange', () => this.refreshSinks());
+    }
     this.sock = openSocket(wsUrl(this.id), {
       open: () => { this.setState({ wsUp: true }); this.boot(); },
       close: () => this.setState({ wsUp: false }),
@@ -515,6 +607,40 @@ class App extends Component {
     this.setState({ delivery, deliveryOpen: false });
   }
 
+  /* ---- audio output ---- */
+
+  /** Enumerate the outputs and re-apply the choice: on load, and again on every devicechange.
+   *  A stored device that is gone (the JBL was unplugged) cannot be routed to, so it is dropped
+   *  rather than left pointing at a dead id. The <audio> element itself is created once in the
+   *  HTML and never replaced, so these are the only moments the routing can be lost. */
+  async refreshSinks() {
+    const devices = await listOutputs();
+    const keep = !this.state.sink || devices.some((d) => d.deviceId === this.state.sink);
+    const sink = keep ? this.state.sink : '';
+    if (!keep) storeSink('');
+    this.setState({ sinks: devices, sink, sinkNamed: devices.some((d) => d.label) });
+    await routeAudio(audio, sink);
+  }
+
+  /** The menu's first entry while the names are blank. A refusal is remembered so the entry stops
+   *  asking and the devices are offered under generic names instead: an unnamed picker still works. */
+  async nameDevices() {
+    const ok = await askDeviceNames();
+    this.setState({ sinkDenied: !ok, sinkOpen: true });
+    await this.refreshSinks();
+  }
+
+  /** '' is the system default. A device that refuses the routing falls back to the default rather
+   *  than leaving the menu claiming an output the element is not actually using. */
+  async pickSink(id) {
+    this.setState({ sink: id, sinkOpen: false });
+    storeSink(id);
+    if (await routeAudio(audio, id)) return;
+    storeSink('');
+    this.setState({ sink: '' });
+    await routeAudio(audio, '');
+  }
+
   /** Board refreshes are debounced: boot pre-render finishes dozens of jobs per minute. */
   refreshSoon() {
     clearTimeout(this.refreshTimer);
@@ -536,8 +662,8 @@ class App extends Component {
       case 'job.started': return this.trackJob(d, 'running', { started: Date.now() });
       case 'job.progress': return this.trackJob(d, 'running', { stage: d.stage });
       case 'job.done': return this.onDone(d);
-      case 'job.failed': return this.trackJob(d, 'failed');
-      case 'job.cancelled': return this.forgetJob(d.job_id ?? d.id);
+      case 'job.failed': this.trackJob(d, 'failed'); return this.dropPrepare(d.job_id ?? d.id);
+      case 'job.cancelled': this.forgetJob(d.job_id ?? d.id); return this.dropPrepare(d.job_id ?? d.id);
       case 'queue.changed': return this.setState({ queueDepth: d.depth ?? 0 });
       case 'play.start': return this.onPlayStart(d);
       case 'play.end': return this.onPlayEnd(false);
@@ -553,6 +679,12 @@ class App extends Component {
     const queueDepth = Array.isArray(d.queue) ? d.queue.length : this.state.queueDepth;
     // the pencil re-arms only when a status event says the brain is resident again
     this.setState({ ready, player, queueDepth, ...(brainReady(ready) ? { brainDown: false } : {}) });
+  }
+
+  /** A preparation that failed or was cancelled returns Speak to its idle state. Nothing is said
+   *  here: the failure banner is already the one report of it. */
+  dropPrepare(id) {
+    this.setState((s) => (id && s.prepareJob === id ? { preparing: null, prepareJob: null } : null));
   }
 
   /** A cancelled job leaves no trace: the tile falls back to whatever the server says about the line. */
@@ -590,7 +722,9 @@ class App extends Component {
       const lineId = job?.line_id ?? d.line_id ?? s.meta[rid]?.line_id ?? null;
       const meta = { ...s.meta, [rid]: { ...s.meta[rid], line_id: lineId, text: job?.text, take_no: job?.take_no, verified: d.verified, gate: d.gate } };
       const board = lineId && s.board ? patchLine(s.board, lineId, { render_id: rid, status: statusOf(d) }) : s.board;
-      return { jobs, meta, board };
+      // the render Speak was waiting for: the line is armed and the next press plays it instantly
+      const arm = s.prepareJob === id ? { preparing: null, prepareJob: null, prepared: { ...s.preparing, render_id: rid } } : null;
+      return { jobs, meta, board, ...arm };
     });
     if (job?.autoplay) this.play(rid, job.label);      // a gate-failed take still plays: the strip's red dot invites Regen
     this.refreshSoon();
@@ -742,12 +876,38 @@ class App extends Component {
     api('DELETE', `/api/lines/${line.id}`).then(() => this.loadBoard()).catch((e) => this.fail(e));
   }
 
-  /** `override` lets Ctrl+Enter speak the text the fix just produced without waiting for a state flush. */
-  speak(override) {
-    const text = (override ?? this.state.text).trim();
-    if (!text) return;
-    this.setState({ text: '', fixUndo: null, fixNote: null });
-    this.say({ text, lineId: null, label: text, delivery: this.state.delivery });
+  /** Speak is two presses. The first renders the line and arms the button; the second plays what
+   *  was prepared, and every press after that plays it again, so a line the DM has ready comes out
+   *  the instant he asks for it. Enter is the same control and takes the same two stages. */
+  speak() {
+    const { text, preparing } = this.state;
+    if (!text.trim() || preparing) return;         // a preparation in flight owns the button
+    const ready = armedRender(this.state.prepared, this.state);
+    if (ready) return this.play(ready.render_id, ready.text);
+    this.prepare(text);
+  }
+
+  /** The first press: render the typed line and hold it. The box keeps its text — clearing it here
+   *  would throw away the line the DM is about to speak — and nothing plays until he presses again.
+   *  A cache hit is already a finished render, so it arms without waiting for a job. */
+  async prepare(text) {
+    const { voice, lang, delivery } = this.state;
+    const line = (text || '').trim();
+    if (!voice || !line || this.state.preparing) return;
+    const want = { text: line, voice: voice.id, lang, delivery };
+    const body = { voice: voice.id, text: line, lang, priority: 'live', take_no: 0 };
+    if (delivery !== BARE) body.delivery = delivery;
+    this.setState({ preparing: want, prepareJob: null });
+    try {
+      const r = await api('POST', '/api/say', body);
+      this.noteMeta(r.render_id, { line_id: null, text: line, take_no: 0, delivery });
+      if (r.cached) return this.setState({ preparing: null, prepareJob: null, prepared: { ...want, render_id: r.render_id } });
+      this.setState({ prepareJob: r.job_id });
+      this.registerJob(r.job_id, { line_id: null, label: line, text: line, take_no: 0, position: r.position, autoplay: false });
+    } catch (e) {
+      this.setState({ preparing: null, prepareJob: null });
+      this.fail(e);
+    }
   }
 
   /** The pencil: one pass of the Writer over the box. Returns the text now in the box, null if it never answered. */
@@ -777,10 +937,12 @@ class App extends Component {
     try { await api('POST', '/api/brain/wake', {}); } catch { /* the banner already says it is down */ }
   }
 
-  /** Ctrl+Enter. A brain that never answered leaves the line in the box, so Enter still speaks it as typed. */
-  async fixThenSpeak() {
+  /** Ctrl+Enter: the pencil, then the same preparation the first Speak press makes. It never plays
+   *  — the DM still picks the moment. A brain that never answered leaves the line in the box, so
+   *  Enter still prepares it as typed. */
+  async fixThenPrepare() {
     const fixed = await this.fix();
-    if (fixed !== null) this.speak(fixed);
+    if (fixed !== null) this.prepare(fixed);
   }
 
   /** Restores the pre-fix text character for character; the ghost line and Ctrl+Z share it. */
@@ -831,7 +993,7 @@ class App extends Component {
    *  Voice switching moved to Alt+1..9 because Shift and a tile's key now edits that tile. */
   onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); return this.stop(); }
-    if (e.key === 'Enter') { e.preventDefault(); return e.ctrlKey ? this.fixThenSpeak() : this.speak(); }
+    if (e.key === 'Enter') { e.preventDefault(); return e.ctrlKey ? this.fixThenPrepare() : this.speak(); }
     if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); return this.saveLine(this.state.text, this.state.delivery); }
     if (isTyping(e.target) || e.metaKey) return;
     if (e.altKey) {
@@ -891,10 +1053,15 @@ class App extends Component {
       : brainLoading(s.ready) ? ['warn', 'mozog sa načítava, chvíľu to potrvá']
       : s.brainDown ? ['warn', 'mozog nie je pripravený'] : site;
     const catLines = (s.board?.lines || []).filter((l) => l.category === s.tab);
+    const sink = s.sinkOk ? {
+      devices: s.sinks, value: s.sink, open: s.sinkOpen, named: s.sinkNamed, denied: s.sinkDenied,
+      onToggle: () => this.setState((st) => ({ sinkOpen: !st.sinkOpen })),
+      onPick: (id) => this.pickSink(id), onAskNames: () => this.nameDevices(),
+    } : null;
     return html`<div class="play">
       <${TopBar} voice=${s.voice} ready=${s.ready} speaker=${!!s.player?.speaker}
         queued=${s.queueDepth ?? s.ready?.queue_depth ?? 0} pending=${s.player?.queue?.length || 0}
-        onStop=${() => this.stop()} />
+        sink=${sink} onStop=${() => this.stop()} />
       ${banner && html`<div class="banner ${banner[0]}">${banner[1]}</div>`}
       <div class="main">
         <aside class="left">
@@ -910,7 +1077,8 @@ class App extends Component {
       <footer class="bottom">
         <${ImprovBar} text=${s.text} lang=${s.lang} delivery=${s.delivery} deliveries=${s.deliveries}
           deliveryOpen=${s.deliveryOpen} fixing=${s.fixing} fixUndo=${s.fixUndo} fixNote=${s.fixNote}
-          brainDown=${s.brainDown} boxRef=${(el) => { this.box = el; }}
+          brainDown=${s.brainDown} armed=${!!armedRender(s.prepared, s)} preparing=${!!s.preparing}
+          boxRef=${(el) => { this.box = el; }}
           onText=${(text) => this.setState({ text })}
           onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()} onSave=${() => this.saveLine(s.text, s.delivery)}
           onDelivery=${(id) => this.setDelivery(id)}
