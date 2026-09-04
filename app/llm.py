@@ -58,7 +58,11 @@ class BrainNotReady(RuntimeError):
 # makes a mid-size model blend the two languages inside one sentence.
 SK_FIX_SYSTEM = (
     "Si korektor a dialógový redaktor pre slovenský stôl Dungeons & Dragons. "
-    "Dostaneš jednu repliku, ktorú niekto o chvíľu povie nahlas.\n"
+    "Dostaneš jednu repliku, ktorú postava o chvíľu povie nahlas.\n"
+    # 0: the failure this prompt exists to prevent. A mid-size model reads a
+    # question and answers it; the pencil must hand back the DM's own line.
+    "0. NEODPOVEDAJ na repliku. Nie si postava a nevedieš rozhovor. Dostaneš text "
+    "a vrátiš TEN ISTÝ text opravený. Ak je replika otázka, vrátiš tú istú otázku.\n"
     # 1: the DM types at the table, often without diacritics; this is the half of
     # the job that makes "ludia" into "ľudia" and keeps the case endings honest.
     "1. Oprav pravopis, diakritiku, pády, zhodu a slovosled. Odstráň bohemizmy "
@@ -79,12 +83,23 @@ SK_FIX_SYSTEM = (
     # 6: a delivery is the DM's choice, armed in the Lab; the Writer never picks one.
     "6. Nikdy nepíš značky v tvare <|...|>, javiskové poznámky, odrážky, úvodzovky "
     "okolo celej repliky ani vysvetlenia.\n"
-    "Vráť LEN výslednú repliku ako jeden riadok."
+    "Vráť LEN výslednú repliku ako jeden riadok.\n"
+    # Two worked examples, because the other failure mode is a model that hands
+    # the line back untouched when it cannot see what was wrong with it.
+    "Príklady:\n"
+    "vstup: cau kamos ako sa mas dnes rano\n"
+    "výstup: Čau, kamoš. Ako sa máš dnes ráno?\n"
+    "vstup: ten mec nechaj tam je prekliaty verim mi\n"
+    "výstup: Ten meč tam nechaj — je prekliaty. Ver mi."
 )
 
 EN_FIX_SYSTEM = (
     "You are a proofreader and dialogue editor for a Dungeons & Dragons table. "
-    "You are given one line that someone is about to say out loud.\n"
+    "You are given one line that a character is about to say out loud.\n"
+    # 0: see the Slovak prompt. The model must edit the line, never reply to it.
+    "0. DO NOT ANSWER the line. You are not the character and you are not holding "
+    "a conversation. You are given text and you return THAT SAME text, corrected. "
+    "If the line is a question, you return the same question.\n"
     # 1: same first job as the Slovak prompt, minus the diacritics problem.
     "1. Fix spelling, grammar, agreement and word order.\n"
     # 2: the sentence has to be the sentence a person would actually say.
@@ -101,7 +116,12 @@ EN_FIX_SYSTEM = (
     # 6: deliveries belong to the DM, not to the Writer.
     "6. Never write <|...|> tokens, stage directions, bullet points, quotation "
     "marks around the whole line, or explanations.\n"
-    "Return ONLY the resulting line, on one line."
+    "Return ONLY the resulting line, on one line.\n"
+    "Examples:\n"
+    "in: hey mate how are you doing this morning\n"
+    "out: Hey, mate. How are you doing this morning?\n"
+    "in: leave that sword its cursed trust me\n"
+    "out: Leave that sword — it is cursed. Trust me."
 )
 
 _PERSONA_LEAD = {"sk": "Repliku hovorí táto postava:", "en": "The line is spoken by this character:"}
