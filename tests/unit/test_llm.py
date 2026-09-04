@@ -130,7 +130,22 @@ def test_chat_request_follows_the_contract(monkeypatch):
     assert body["model"] == config.LLM_MODEL and body["stream"] is False
     assert body["think"] is False and body["keep_alive"] == -1
     assert body["options"] == {"temperature": 0.3, "num_ctx": 4096}
-    assert body["messages"][1] == {"role": "user", "content": "ten nie kamos"}
+    user = body["messages"][1]
+    # The line is framed as an editing job: a bare line reads as dialogue and a
+    # model handed dialogue answers it (measured on the box, 2026-09-04).
+    assert user["role"] == "user" and user["content"].endswith("ten nie kamos")
+    assert llm._TASK_LEAD["sk"] in user["content"]
+
+
+def test_the_persona_is_reference_not_an_identity(monkeypatch):
+    """Bag's persona begins "Si Vak" and tells its reader to answer in a sentence
+    or three. Unframed, that turns the corrector into the character."""
+    resident(monkeypatch)
+    calls = stub_chat(monkeypatch, "Ten nie, kamoš.")
+    llm.fix("ten nie kamos", make_voice())
+    system = calls[0]["body"]["messages"][0]["content"]
+    assert llm._PERSONA_LEAD["sk"] in system
+    assert "NEHRÁŠ túto postavu" in system
 
 
 def test_a_rejected_answer_is_retried_once_and_no_further(monkeypatch):
