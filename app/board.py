@@ -141,19 +141,45 @@ def import_bank(path: Path | None = None) -> int:
     ids hash the line's identity, so a re-import never duplicates a row or
     touches a pin, favourite or slot. A voice/language with no favourites yet
     gets the defaults. ``path`` defaults to ``DATA_DIR/phrases.json``, read at
-    call time so a test's ``BAG_DATA`` override is honoured."""
+    call time so a test's ``BAG_DATA`` override is honoured.
+
+    Bank lines the file no longer carries are retired afterwards (see
+    :func:`_retire_missing`), so editing a line's wording replaces its tile
+    instead of leaving the old one behind."""
     ensure_columns()
     bank = json.loads((path or config.DATA_DIR / "phrases.json").read_text(encoding="utf-8"))
     count = 0
+    seen: dict[tuple[str, str], set[str]] = {}
     for lang, banks in bank.items():
         for key, categories in banks.items():
             for voice_id in NPC_VOICES if key == "npc" else (key,):
                 for category, texts in categories.items():
                     for text in texts:
-                        store.upsert_line(voice_id, lang, category, text, "bank")
+                        seen.setdefault((voice_id, lang), set()).add(
+                            store.upsert_line(voice_id, lang, category, text, "bank"))
                         count += 1
                 _seed_favourites(voice_id, lang, categories)
+    _retire_missing(seen)
     return count
+
+
+def _retire_missing(seen: dict[tuple[str, str], set[str]]) -> None:
+    """Drop bank rows for a voice/language the bank file no longer lists.
+
+    WHY: a line id hashes voice+lang+category+text, so rewording a bank line
+    writes a new row and the old tile would sit on the board forever. Only
+    ``source='bank'`` rows are touched -- a line the DM saved is theirs, and a
+    voice/language absent from this file is left completely alone. The renders
+    stay in the store under their own ids; only the tile goes.
+    """
+    if not seen:
+        return
+    with closing(store.db()) as con, con:
+        for (voice_id, lang), ids in seen.items():
+            keep = ",".join("?" * len(ids))
+            con.execute(
+                f"DELETE FROM lines WHERE voice_id=? AND lang=? AND source='bank' AND id NOT IN ({keep})",
+                (voice_id, lang, *ids))
 
 
 def _seed_favourites(voice_id: str, lang: str, categories: dict[str, list[str]]) -> None:
