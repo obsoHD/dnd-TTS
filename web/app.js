@@ -46,11 +46,13 @@ function clientId() {
 const wsUrl = (id) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?client=${id}&role=play`;
 
 /** JSON fetch that throws on HTTP errors so every caller surfaces them the same way. */
-async function api(method, path, body) {
+async function api(method, path, body, timeoutMs = 0) {
+  const stop = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
   const res = await fetch(path, {
     method,
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    signal: stop,
   });
   if (!res.ok) {
     const err = new Error(`${method} ${path} -> ${res.status}`);
@@ -192,6 +194,7 @@ const pickable = (items, id) => (items.some((d) => d.id === id && selectable(d))
 
 /** The brain is usable only while it is resident; anything else keeps the pencil disabled. */
 const brainReady = (ready) => ready?.llm === 'resident' || ready?.llm === true;
+const brainLoading = (ready) => ready?.llm === 'loading';
 
 /** Server status overlaid with what this client saw in job and play events. */
 function tileState(line, job, now) {
@@ -706,18 +709,24 @@ class App extends Component {
     if (!voice || !original || fixing || brainDown) return null;
     this.setState({ fixing: true, fixNote: null });
     try {
-      const r = await api('POST', '/api/fix', { voice: voice.id, text: original, lang });
+      const r = await api('POST', '/api/fix', { voice: voice.id, text: original, lang }, 15000);
       // the undo keeps the raw box content, not the trimmed line that was sent, so it restores exactly
       if (r.changed) this.setState({ text: r.text, fixUndo: text, fixNote: null });
       else this.setState({ fixNote: r.note || 'bez zmeny', fixUndo: null });
       return r.changed ? r.text : text;
     } catch (e) {
-      if (e.status === 503) this.setState({ brainDown: true, fixNote: null });
+      if (e.status === 503) { this.setState({ brainDown: true, fixNote: null }); this.wakeBrain(); }
+      else if (e.name === 'TimeoutError') this.setState({ fixNote: 'mozog neodpovedal včas' });
       else this.fail(e);
       return null;
     } finally {
       this.setState({ fixing: false });
     }
+  }
+
+  /** Ask ollama to load the model. Fire and forget: the status event re-enables the pencil. */
+  async wakeBrain() {
+    try { await api('POST', '/api/brain/wake', {}); } catch { /* the banner already says it is down */ }
   }
 
   /** Ctrl+Enter. A brain that never answered leaves the line in the box, so Enter still speaks it as typed. */
@@ -820,6 +829,7 @@ class App extends Component {
     // but never the two 'bad' ones: a lost socket or a dead TTS is the bigger problem on the table
     const banner = s.error ? ['bad', s.error]
       : site?.[0] === 'bad' ? site
+      : brainLoading(s.ready) ? ['warn', 'mozog sa načítava, chvíľu to potrvá']
       : s.brainDown ? ['warn', 'mozog nie je pripravený'] : site;
     const catLines = (s.board?.lines || []).filter((l) => l.category === s.tab);
     return html`<div class="play">

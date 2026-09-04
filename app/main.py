@@ -32,7 +32,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, store, ws
+from app import config, llm, store, ws
 from app.api import health, renders
 from app.api import voices as voices_api
 from app.ws import Hub
@@ -153,6 +153,7 @@ async def _startup(app: FastAPI, peers: Peers) -> None:
     worker.start()
     app.state.worker = worker
     health.bind_worker(worker, peers.jobs.PRIORITY)
+    llm.warm_in_background()      # a cold 27B is ~90 s; nobody should meet that mid-scene
     queued = _enqueue_prerender(app, peers)
     log.info("bank: %d lines; voices: %s; prerender queued: %d",
              bank, ", ".join(app.state.voices) or "none", queued)

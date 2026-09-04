@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 
 import requests
 
@@ -31,6 +32,8 @@ log = logging.getLogger(__name__)
 RESIDENT_FRACTION = 0.9     # below this ollama has spilled the model to CPU: too slow for the table
 PROBE_TIMEOUT_S = 3.0       # WHY shorter than the chat call: the pencil must go grey fast, not hang
 CHAT_TIMEOUT_S = 8.0
+WARM_TIMEOUT_S = 300.0      # a cold 27B takes up to a minute and a half off a spinning disk
+_warming = threading.Event()
 TEMPERATURE = 0.3           # a corrector, not an author: the same line twice should come back the same
 NUM_CTX = 4096              # one line plus a persona; a 40k context would waste ~8 GB of VRAM
 MAX_BEATS = 3               # canon caps pause tokens at 3 too, so a fourth beat would be dropped anyway
@@ -124,6 +127,43 @@ def residency() -> str:
         vram = m.get("size_vram") or 0
         return "resident" if size and vram / size >= RESIDENT_FRACTION else "loaded"
     return "absent"
+
+
+def warming() -> bool:
+    """True while a background load is in flight, so the UI can say "loading"
+    instead of "absent" and the DM knows waiting is worth it."""
+    return _warming.is_set()
+
+
+def warm() -> str:
+    """Load the model into VRAM and pin it there, then report the residency.
+
+    WHY this exists: ``residency`` gates every Writer call, and ollama unloads a
+    model after its idle timeout. Without a warm-up the brain would be absent
+    forever -- nothing would ever ask for it, so nothing would ever load it.
+    Blocking: the caller runs it off the request path (boot, or the wake button).
+    """
+    if _warming.is_set():
+        return "loading"
+    _warming.set()
+    try:
+        requests.post(config.LLM_URL + "/api/generate",
+                      json={"model": config.LLM_MODEL, "prompt": "", "stream": False,
+                            "keep_alive": -1, "options": {"num_ctx": NUM_CTX}},
+                      timeout=WARM_TIMEOUT_S)
+    except requests.RequestException as e:
+        log.warning("brain warm-up failed: %s", e)
+    finally:
+        _warming.clear()
+    state = residency()
+    log.info("brain warm-up finished: %s", state)
+    return state
+
+
+def warm_in_background() -> None:
+    """Fire and forget: boot must not wait a minute and a half for the brain."""
+    if not _warming.is_set():
+        threading.Thread(target=warm, name="brain-warm", daemon=True).start()
 
 
 def fix(text: str, voice: Voice, lang: str = "sk") -> dict:

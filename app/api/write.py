@@ -70,6 +70,21 @@ def post_fix(body: FixRequest, request: Request) -> FixResponse:
         raise HTTPException(status_code=503, detail=BRAIN_DOWN) from e
 
 
+BRAIN_LOADING = "mozog sa načítava"
+
+
+@router.post("/api/brain/wake")
+def post_wake() -> dict:
+    """Ask for the brain without waiting for it.
+
+    WHY a button and not only the boot warm-up: ollama drops the model whenever
+    something else needs the card, and the DM should be able to call it back
+    from the table instead of restarting the service.
+    """
+    llm.warm_in_background()
+    return {"state": "loading" if llm.warming() else llm.residency(), "detail": BRAIN_LOADING}
+
+
 @router.get("/api/deliveries")
 def get_deliveries(request: Request, voice: str = "bag") -> list[dict]:
     """What the delivery pill offers for this voice: bare first, then every

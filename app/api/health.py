@@ -100,7 +100,12 @@ def stt_up() -> bool:
 
 def llm_residency() -> str:
     """``resident`` when ollama holds ``LLM_MODEL`` (almost) entirely in VRAM,
-    else ``absent``. A partially offloaded 27B answers, but not at table speed."""
+    ``loading`` while a warm-up is in flight, else ``absent``. A partially
+    offloaded 27B answers, but not at table speed."""
+    from app import llm      # imported here so health stays cheap for the probes above
+
+    if llm.warming():
+        return "loading"
     try:
         models = requests.get(config.LLM_URL + "/api/ps", timeout=PROBE_TIMEOUT_S).json().get("models", [])
     except (requests.RequestException, ValueError):
