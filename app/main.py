@@ -43,9 +43,10 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 PRERENDER_KIND = "bank"
 # Routers other builders own, by module name -> owner named in the error when the file is missing.
 # ``write`` (M3: POST /api/fix, GET /api/deliveries) rides the same mechanism; without it the
-# improv bar's pencil and delivery pill answer 404 in the assembled app.
+# improv bar's pencil and delivery pill answer 404 in the assembled app. ``creator`` (M4) is the
+# same story for the whole Voice Creator API behind the ``/creator`` page.
 PEER_ROUTERS = {"say": "worker", "jobs": "worker", "board": "board", "play": "player", "remote": "player",
-                "write": "writer"}
+                "write": "writer", "creator": "creator"}
 
 
 @dataclass(frozen=True)
@@ -206,6 +207,10 @@ def create_app() -> FastAPI:
     @app.get("/speaker", include_in_schema=False)
     def speaker() -> FileResponse:
         return _page("speaker.html")
+
+    @app.get("/creator", include_in_schema=False)
+    def creator() -> FileResponse:
+        return _page("creator.html")
 
     return app
 

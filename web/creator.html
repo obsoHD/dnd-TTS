@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1613">
+  <title>Mr. Bag - Voice Creator</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/ui.css">
+</head>
+<body>
+  <div id="app"></div>
+  <!-- The one audio element: the clip audition. Created here, never by the component
+       tree, so a re-render cannot swap it out in the middle of playback. -->
+  <audio id="audio" preload="none"></audio>
+  <script type="module" src="/static/creator.js"></script>
+</body>
+</html>

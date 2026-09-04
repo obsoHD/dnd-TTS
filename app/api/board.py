@@ -18,8 +18,8 @@ router = APIRouter()
 class NewLine(BaseModel):
     voice: str
     lang: str
-    category: str
     text: str
+    category: str | None = None  # omitted -> board.SAVED_CATEGORY[lang]
 
 
 class LinePatch(BaseModel):
@@ -42,6 +42,17 @@ def post_line(body: NewLine) -> dict:
         raise HTTPException(400, "too_long") from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+
+
+@router.delete("/api/lines/{line_id}")
+def delete_line(line_id: str) -> dict:
+    try:
+        board.delete_line(line_id)
+    except board.LineNotFound as e:
+        raise HTTPException(404, "line not found") from e
+    except board.BankLine as e:
+        raise HTTPException(409, "bank line") from e
+    return {"ok": True}
 
 
 @router.patch("/api/lines/{line_id}")

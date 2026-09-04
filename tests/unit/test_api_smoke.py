@@ -9,6 +9,7 @@ finishes a job the API submitted, and the file it wrote is served back."""
 from __future__ import annotations
 
 import importlib
+import json
 import shutil
 import time
 from pathlib import Path
@@ -31,6 +32,9 @@ JOB_TIMEOUT_S = 5.0
 READYZ_KEYS = {"tts", "tts_warm", "stt", "llm", "speaker", "bank_ready", "queue_depth"}
 LINE_KEYS = {"id", "text", "category", "status", "render_id", "favourite", "slot"}
 TEXT = "Vy nie ste družina, vy ste kolektívna diagnóza."
+# Counted from the bank, never typed: the population pass grows these files and a
+# hand-written total would go stale the next time a category gains a line.
+BAG_SK_LINES = sum(len(texts) for texts in json.loads(PHRASES.read_text(encoding="utf-8"))["sk"]["bag"].values())
 
 
 def make_voice() -> Voice:
@@ -123,7 +127,7 @@ def test_board_after_import(client: TestClient) -> None:
     board = r.json()
     assert set(board) == {"categories", "lines", "favourites", "ten_nie"}
     assert len(board["categories"]) == 8 and board["categories"][-1] == "Ten nie."
-    assert len(board["lines"]) == 80
+    assert len(board["lines"]) == BAG_SK_LINES
     assert all(set(line) == LINE_KEYS for line in board["lines"])
     ids = {line["id"] for line in board["lines"]}
     assert len(board["favourites"]) == 8 and board["favourites"][0] in ids

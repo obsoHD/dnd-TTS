@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -99,12 +100,13 @@ def test_import_bank_counts_every_line_once_per_voice_and_is_idempotent(fresh_db
     assert row_count() == expected
     assert board.import_bank(PHRASES) == expected
     assert row_count() == expected
-    assert len(board.board("bag", "sk")["lines"]) == 80
+    assert len(board.board("bag", "sk")["lines"]) == sum(len(t) for t in bank["sk"]["bag"].values())
     with closing(store.db()) as con:
         npc = con.execute("SELECT voice_id, COUNT(*) n FROM lines WHERE lang='sk' AND category='Pozdrav' "
                           "GROUP BY voice_id ORDER BY voice_id").fetchall()
         sources = {row[0] for row in con.execute("SELECT DISTINCT source FROM lines")}
-    assert [(r["voice_id"], r["n"]) for r in npc] == [("female", 10), ("male", 10)]
+    greetings = len(bank["sk"]["npc"]["Pozdrav"])   # counted from the bank, not typed
+    assert [(r["voice_id"], r["n"]) for r in npc] == [("female", greetings), ("male", greetings)]
     assert sources == {"bank"}
 
 
@@ -200,9 +202,13 @@ def test_set_line_slot_evicts_holder_and_unfavourite_frees_the_slot(bank):
 
 
 def test_set_line_category_and_errors(bank):
-    line = board.board("bag", "sk")["lines"][15]
+    # A category sits where its earliest line sits, so move a line that is inside
+    # the second bank category but is not its first: the second category keeps its
+    # place and the new one lands right after it. Picked from the data, not by row
+    # number, so growing the bank cannot silently retarget this test.
+    second = [line for line in board.board("bag", "sk")["lines"] if line["category"] == BAG_SK[1]]
+    line = second[1]
     assert board.set_line(line["id"], category="  Nová   kategória ")["category"] == "Nová kategória"
-    # a category sits where its earliest line sits: row 15 is inside the second bank category
     assert board.categories("bag", "sk") == BAG_SK[:2] + ["Nová kategória"] + BAG_SK[2:]
     with pytest.raises(ValueError):
         board.set_line(line["id"], slot=9)
@@ -230,6 +236,58 @@ def test_add_line_appends_an_improv_tile_and_refuses_what_cannot_render(bank):
         board.add_line("bag", "sk", "Vlastné", "slovo " * 60)
     with pytest.raises(ValueError):
         board.add_line("bag", "sk", "Vlastné", "   ")
+
+
+def test_add_line_defaults_category_when_omitted_and_stays_idempotent(bank):
+    saved = board.add_line("bag", "sk", None, "  Toto si zapamätaj. ")
+    assert saved["category"] == board.SAVED_CATEGORY["sk"] == "Moje"
+    again = board.add_line("bag", "sk", None, "Toto si zapamätaj.")
+    assert again["id"] == saved["id"]
+    assert board.categories("bag", "sk")[-1] == "Moje"
+    en = board.add_line("bag", "en", None, "Remember this.")
+    assert en["category"] == board.SAVED_CATEGORY["en"] == "Mine"
+    with closing(store.db()) as con:
+        assert con.execute("SELECT source FROM lines WHERE id=?", (saved["id"],)).fetchone()[0] == "improv"
+
+
+def test_delete_line_removes_a_saved_tile_but_refuses_a_bank_line(bank):
+    saved = board.add_line("bag", "sk", None, "Vlastná veta na zmazanie.")
+    render_id = pin_render(saved["id"], saved["text"])
+    board.delete_line(saved["id"])
+    with pytest.raises(board.LineNotFound):
+        board.get_line(saved["id"])
+    assert store.get_render(render_id) is not None  # the render outlives the deleted tile
+
+    bank_line = board.board("bag", "sk")["lines"][0]
+    with pytest.raises(board.BankLine):
+        board.delete_line(bank_line["id"])
+    assert board.get_line(bank_line["id"]) == bank_line
+    with pytest.raises(board.LineNotFound):
+        board.delete_line("nope")
+
+
+def test_set_signature_gives_a_later_voice_its_own_t_line(data_dir):
+    assert board.signature_category("grump", "sk") is None
+    voice_dir = config.voice_dir("grump")
+    voice_dir.mkdir(parents=True)
+    (voice_dir / "voice.yaml").write_text(
+        yaml.safe_dump({"id": "grump", "label": "Grump"}, sort_keys=False), encoding="utf-8")
+
+    board.set_signature("grump", "sk", "Odmietnutie")
+    board.set_signature("grump", "en", "Refusal")
+    assert board.signature_category("grump", "sk") == "Odmietnutie"
+    assert board.signature_category("grump", "en") == "Refusal"
+    data = yaml.safe_load((voice_dir / "voice.yaml").read_text(encoding="utf-8"))
+    assert data["label"] == "Grump"  # existing keys survive the rewrite
+    assert data["signature_category"] == {"sk": "Odmietnutie", "en": "Refusal"}
+    # the four built-in voices keep their hard-coded signature, untouched by the fallback
+    assert board.signature_category("bag", "sk") == "Ten nie."
+
+
+def test_set_signature_creates_voice_yaml_when_none_exists_yet(data_dir):
+    assert not config.voice_dir("newbie").exists()
+    board.set_signature("newbie", "sk", "Kategória")
+    assert board.signature_category("newbie", "sk") == "Kategória"
 
 
 def test_prerender_plan_favourites_then_ten_nie_then_the_rest(bank):
@@ -307,6 +365,23 @@ def test_api_board_lines_and_patch(client):
     assert client.get("/api/board").json()["favourites"][7] == created.json()["id"]
     assert client.patch(f"/api/lines/{created.json()['id']}", json={"slot": 9}).status_code == 422
     assert client.patch("/api/lines/nope", json={"favourite": True}).status_code == 404
+
+    saved = client.post("/api/lines", json={"voice": "bag", "lang": "sk", "text": "Ulož toto."})
+    assert saved.status_code == 200 and saved.json()["category"] == board.SAVED_CATEGORY["sk"]
+
+
+def test_api_delete_line_refuses_a_bank_line_and_removes_a_saved_one(client):
+    created = client.post("/api/lines", json={"voice": "bag", "lang": "sk", "category": "Vlastné", "text": "Zmiznúť."})
+    line_id = created.json()["id"]
+    bank_id = board.board("bag", "sk")["lines"][0]["id"]
+
+    assert client.delete(f"/api/lines/{bank_id}").status_code == 409
+    assert client.get("/api/board").json()["lines"][0]["id"] == bank_id  # the bank line survived
+
+    assert client.delete(f"/api/lines/{line_id}").json() == {"ok": True}
+    assert not any(line["id"] == line_id for line in client.get("/api/board").json()["lines"])
+    assert client.delete(f"/api/lines/{line_id}").status_code == 404
+    assert client.delete("/api/lines/nope").status_code == 404
 
 
 def test_api_regenerate_submits_a_live_job_with_the_next_take(client):

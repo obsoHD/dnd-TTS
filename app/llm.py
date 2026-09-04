@@ -17,12 +17,16 @@ back with a note and taps Speak.
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
 
 import requests
 
 from app import canon, config
 from app.voices import Voice
+
+log = logging.getLogger(__name__)
 
 RESIDENT_FRACTION = 0.9     # below this ollama has spilled the model to CPU: too slow for the table
 PROBE_TIMEOUT_S = 3.0       # WHY shorter than the chat call: the pencil must go grey fast, not hang
@@ -233,3 +237,292 @@ def _cap_beats(text: str) -> str:
 def _unchanged(original: str, note: str) -> dict:
     """The safe answer: the DM's own text, and a reason they can read."""
     return {"text": original, "original": original, "changed": False, "note": note}
+
+
+# -- the Voice Creator's two authoring calls (M4 contract, section 4) --------
+#
+# ``fix`` corrects one line the DM typed; these two invent text for a voice that
+# does not exist yet. Same model, same residency rule, same "one attempt, then
+# live with the answer" discipline, and the same principle that nothing the
+# model says is trusted: every generated line is re-checked in code and dropped
+# if it fails, because a soundboard is written once and then spoken at the table
+# for months. Only the temperature differs (an author, not a corrector) and the
+# timeout, which is measured against a DM sitting on the Creator page rather
+# than mid-scene.
+
+WRITE_TEMPERATURE = 0.8     # a corrector wants the same answer twice; an author wants variety
+PERSONA_TIMEOUT_S = 60.0
+PHRASES_TIMEOUT_S = 90.0    # one category of ten lines, on a box that is also rendering
+MAX_PERSONA_CHARS = 700     # this text is prepended to every ``fix`` prompt; longer would eat num_ctx
+MIN_CATEGORIES = 2          # a soundboard needs at least one ordinary tab plus the signature refusal
+MAX_CATEGORIES = 8          # the Play page's tab strip, and 8 x 10 lines is already a long commit
+MIN_LINES = 3               # under this the category is thin and the Creator page warns
+MAX_LINES = 20
+MAX_CATEGORY_CHARS = 40
+
+_FENCE = re.compile(r"^```(?:json)?|```$", re.M)
+
+
+class WriterFailed(RuntimeError):
+    """The brain answered but nothing usable survived the guards.
+
+    Distinct from ``BrainNotReady``: the model is resident, so retrying the same
+    call is pointless and the DM has to be told rather than made to wait. ``fix``
+    has no equivalent because it can always fall back to the DM's own text, and
+    these two calls have nothing to fall back to.
+    """
+
+
+SK_PERSONA_SYSTEM = (
+    "Si autor postáv pre slovenský stôl Dungeons & Dragons. Dostaneš meno postavy "
+    "a jej krátky opis od rozprávača.\n"
+    # The persona is prompt text: it is prepended to every later ``fix`` call, so
+    # it has to describe how the character speaks, not what happened to them.
+    "1. Napíš opis postavy pre hlasový model: register, tempo, typické slová, "
+    "postoj k družine. Píš o tom, AKO hovorí, nie o jej príbehu. Najviac 5 viet.\n"
+    "2. To isté napíš aj po anglicky, rovnako dlho.\n"
+    # The categories become the soundboard's tabs, so they are what the DM
+    # reaches for mid-scene: short, concrete, and named the way a DM thinks.
+    "3. Navrhni {n} kategórií replík pre soundboard. Každá je krátky slovenský "
+    "názov (2-4 slová) toho, čo postava hovorí v jednej situácii.\n"
+    # The signature refusal is the giant red tile; it must exist and it must be
+    # last, because that is where the board looks for it.
+    "4. POSLEDNÁ kategória je vždy to, ako táto postava odmieta - jej vlastná "
+    "hláška, nie všeobecné „Odmietnutie“.\n"
+    'Vráť LEN JSON: {{"sk": "...", "en": "...", "categories": ["...", "..."]}}'
+).format(n=MAX_CATEGORIES)
+
+EN_PERSONA_SYSTEM = (
+    "You are a character author for a Dungeons & Dragons table. You are given a "
+    "character name and a short description from the DM.\n"
+    "1. Write a character description for a voice model: register, pace, typical "
+    "words, attitude to the party. Write about HOW they speak, not their backstory. "
+    "At most 5 sentences.\n"
+    "2. Write the same in Slovak, the same length.\n"
+    "3. Propose {n} soundboard categories. Each is a short English name (2-4 "
+    "words) for what the character says in one situation.\n"
+    "4. The LAST category is always how this character refuses - their own line, "
+    "not a generic \"Refusal\".\n"
+    'Return ONLY JSON: {{"sk": "...", "en": "...", "categories": ["...", "..."]}}'
+).format(n=MAX_CATEGORIES)
+
+SK_PHRASES_SYSTEM = (
+    "Si autor replík pre slovenský stôl Dungeons & Dragons. Píšeš repliky pre "
+    "jednu postavu a jednu kategóriu soundboardu.\n"
+    "1. Každá replika je jedna veta alebo dve, ktoré postava povie NAHLAS.\n"
+    # canon refuses anything longer, so a longer line is a wasted round trip.
+    "2. Najviac {n} znakov na repliku, hovorový slovosled, správna diakritika, "
+    "register a slovník postavy.\n"
+    "3. Žiadne mená hráčov, žiadne konkrétne miesta ani čísla z kampane - "
+    "repliky musia sadnúť do každej scény.\n"
+    # A delivery belongs to the DM and is armed in the Lab; a token written here
+    # would be dropped by the guard anyway.
+    "4. Nikdy nepíš značky <|...|>, javiskové poznámky, mená hovoriaceho, "
+    "odrážky ani čísla riadkov.\n"
+    "5. Repliky sa nesmú opakovať ani parafrázovať.\n"
+    'Vráť LEN JSON: {{"lines": ["...", "..."]}}'
+).format(n=canon.MAX_CHARS)
+
+EN_PHRASES_SYSTEM = (
+    "You are a dialogue author for a Dungeons & Dragons table. You write lines "
+    "for one character and one soundboard category.\n"
+    "1. Every line is one or two sentences the character says OUT LOUD.\n"
+    "2. At most {n} characters per line, spoken word order, the register and "
+    "vocabulary of the character.\n"
+    "3. No player names, no specific places or numbers from the campaign - the "
+    "lines must fit any scene.\n"
+    "4. Never write <|...|> tokens, stage directions, speaker names, bullet "
+    "points or line numbers.\n"
+    "5. No line may repeat or paraphrase another.\n"
+    'Return ONLY JSON: {{"lines": ["...", "..."]}}'
+).format(n=canon.MAX_CHARS)
+
+_CATEGORY_LEAD = {"sk": "Kategória", "en": "Category"}
+_COUNT_LEAD = {"sk": "Napíš", "en": "Write"}
+
+
+def persona(label: str, description: str, lang: str = "sk") -> dict:
+    """A character sheet for a voice that does not exist yet.
+
+    Returns ``{"sk", "en", "label", "description", "categories"}``: the two
+    persona strings that go into ``voice.yaml`` (both languages, because a voice
+    is spoken in both and a persona in the wrong language is what makes the model
+    answer in a mix), the DM's own label and description echoed back so the
+    Creator page can show what produced this, and the soundboard's category list
+    whose **last entry is the signature refusal**.
+
+    Raises ``BrainNotReady`` when the model is not resident and ``WriterFailed``
+    when it answers with nothing usable; there is no fallback text, because an
+    invented persona would quietly become the character.
+    """
+    if residency() != "resident":
+        raise BrainNotReady(config.LLM_MODEL)
+    key = _lang_key(lang)
+    system = EN_PERSONA_SYSTEM if key == "en" else SK_PERSONA_SYSTEM
+    answer = _object(_ask(system, f"{label}\n\n{description}".strip(), PERSONA_TIMEOUT_S))
+    sk, en = _persona_text(answer.get("sk")), _persona_text(answer.get("en"))
+    categories = _categories(answer.get("categories"))
+    if not (sk or en) or len(categories) < MIN_CATEGORIES:
+        raise WriterFailed("persona reply carried no usable text or too few categories")
+    # A voice with only one persona would lose its character in the other
+    # language, so whichever came back stands in for the missing one.
+    return {"sk": sk or en, "en": en or sk, "label": label, "description": description,
+            "categories": categories}
+
+
+def phrases(persona: dict, categories: list[str], lang: str = "sk",
+            per_category: int = 10) -> dict[str, list[str]]:
+    """The soundboard: up to ``per_category`` usable lines for every category.
+
+    One call per category, not one call for the whole board: ``num_ctx`` is 4096
+    and a board is eight categories deep, and a single thin category can then be
+    re-asked on its own instead of re-rolling lines the DM already liked. A
+    category still under ``MIN_LINES`` after that one retry is left thin and
+    logged; the Creator page shows the count and warns, because three real tiles
+    beat ten padded ones.
+    """
+    if residency() != "resident":
+        raise BrainNotReady(config.LLM_MODEL)
+    key = _lang_key(lang)
+    lead = str(persona.get(key) or persona.get("sk") or persona.get("en") or "").strip()
+    board: dict[str, list[str]] = {}
+    for category in categories:
+        lines = _category_lines(lead, category, key, per_category, lang)
+        if len(lines) < MIN_LINES:
+            lines = _merge(lines, _category_lines(lead, category, key, per_category, lang), per_category)
+        if len(lines) < MIN_LINES:
+            log.warning("thin category %r: %d usable lines", category, len(lines))
+        board[category] = lines
+    return board
+
+
+def _category_lines(lead: str, category: str, key: str, per_category: int, lang: str) -> list[str]:
+    """One attempt at one category, with every line already through the guards."""
+    system = EN_PHRASES_SYSTEM if key == "en" else SK_PHRASES_SYSTEM
+    want = max(1, min(int(per_category), MAX_LINES))
+    ask = (f"{_PERSONA_LEAD[key]} {lead}\n\n{_CATEGORY_LEAD[key]}: {category}\n"
+           f"{_COUNT_LEAD[key]} {want}.")
+    try:
+        answer = _ask(system, ask, PHRASES_TIMEOUT_S)
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        # A refused socket or a body that is not the JSON ollama promises costs
+        # this category its lines, not the whole board: the rest are still worth
+        # writing, and the DM sees the empty tab and can re-ask it alone.
+        log.warning("category %r: the brain did not answer", category)
+        return []
+    return _merge([], [usable_line(item, lang) for item in _lines(answer)], want)
+
+
+def _ask(system: str, user: str, timeout: float) -> str:
+    """One attempt against ``POST {LLM_URL}/api/chat``, on the same terms as
+    ``_chat``: no retry, ``think: false`` so the answer is the answer and not a
+    reasoning trace, ``keep_alive: -1`` so the 27B stays pinned between the
+    Creator's steps (a cold reload is ~90 s and a commit makes ten of these
+    calls in a row), ``num_ctx`` 4096 because a persona plus one category fits."""
+    body = {
+        "model": config.LLM_MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "stream": False,
+        "think": False,
+        "keep_alive": -1,
+        "options": {"temperature": WRITE_TEMPERATURE, "num_ctx": NUM_CTX},
+    }
+    r = requests.post(config.LLM_URL + "/api/chat", json=body, timeout=timeout)
+    r.raise_for_status()
+    payload = r.json()
+    return str((payload.get("message") or {}).get("content") or "") if isinstance(payload, dict) else ""
+
+
+def _lang_key(lang: str) -> str:
+    return "en" if str(lang).lower().startswith("en") else "sk"
+
+
+def _json(answer: str) -> object | None:
+    """The JSON hiding in the model's reply, or ``None``.
+
+    Defensive on purpose: a mid-size model asked for JSON still wraps it in a
+    fence, prefixes "Here you go:" or appends a paragraph of commentary. The
+    outermost brace (or bracket) pair is taken and parsed; anything else is a
+    miss, which the callers read as an empty answer rather than an exception.
+    """
+    text = _FENCE.sub("", _THINK.sub("", answer)).strip()
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = text.find(opener), text.rfind(closer)
+        if 0 <= start < end:
+            try:
+                return json.loads(text[start:end + 1])
+            except ValueError:
+                continue
+    return None
+
+
+def _object(answer: str) -> dict:
+    parsed = _json(answer)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _lines(answer: str) -> list[object]:
+    """The model's line list, whether or not it wrapped it in an object."""
+    parsed = _json(answer)
+    if isinstance(parsed, dict):
+        for key in ("lines", "phrases", "repliky"):
+            if isinstance(parsed.get(key), list):
+                return list(parsed[key])
+        return []
+    return list(parsed) if isinstance(parsed, list) else []
+
+
+def _persona_text(value: object) -> str:
+    """Prompt text, not a spoken line: reasoning traces and control tokens go,
+    and the length is capped so a persona cannot crowd the DM's own line out of
+    ``fix``'s context window."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(_TOKEN.sub(" ", _THINK.sub("", value)).split()).strip(_QUOTES).strip()
+    return text[:MAX_PERSONA_CHARS].strip()
+
+
+def _categories(value: object) -> list[str]:
+    """Tab names: short, unique, kept in the model's order, because the last one
+    is the signature refusal and only the order says which one that is."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        name = _persona_text(item)[:MAX_CATEGORY_CHARS].strip(" .:-")
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            out.append(name)
+    return out[:MAX_CATEGORIES]
+
+
+def usable_line(value: object, lang: str) -> str | None:
+    """One generated line, or ``None`` when it may not become a tile.
+
+    Dropped rather than repaired, unlike ``fix``: no DM is waiting on this
+    particular sentence, so a line carrying a control token (a delivery is the
+    DM's choice, armed in the Lab), running past ``canon.MAX_CHARS`` or refused
+    by canon is simply not worth keeping while nine others are fine.
+    """
+    if not isinstance(value, str):
+        return None
+    line = " ".join(_THINK.sub("", value).split()).strip(_QUOTES).strip()
+    if not line or _TOKEN.search(line) or len(line) > canon.MAX_CHARS:
+        return None
+    try:
+        canon.canonicalize(line, lang=lang)
+    except (canon.TooLong, canon.BannedToken, ValueError):
+        return None
+    return line
+
+
+def _merge(kept: list[str], extra: list[str | None], limit: int) -> list[str]:
+    """Append what survived the guards, without duplicates, up to ``limit``."""
+    out = list(kept)
+    seen = {line.casefold() for line in out}
+    for line in extra:
+        if line and line.casefold() not in seen and len(out) < limit:
+            seen.add(line.casefold())
+            out.append(line)
+    return out

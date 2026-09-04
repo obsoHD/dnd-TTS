@@ -80,6 +80,9 @@ audio { display: none; }
 .voice .nm small { display: block; color: var(--muted); font-size: 12px; }
 .key { position: absolute; top: 5px; left: 7px; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .3px; }
 .voice .key { position: static; margin-left: auto; }
+/* The way to the Voice Creator: a plain link, so it still works with the socket down. */
+.voice.new { color: var(--muted); border-style: dashed; text-decoration: none; }
+.voice.new .ini { background: none; border: 1px dashed var(--edge); color: var(--muted); font-size: 22px; font-weight: 400; }
 
 .centre { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .favs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.4fr); gap: 8px; }
@@ -94,6 +97,9 @@ audio { display: none; }
 .grid.note { display: block; color: var(--muted); padding: 12px 4px; }
 
 /* ---------- Tiles ---------- */
+/* The cell is the grid item; the tile is the button inside it, so a tile's own
+   controls can sit beside the button instead of nested inside it. */
+.cell { position: relative; display: flex; min-width: 0; }
 .tile {
   position: relative; display: flex; align-items: center; justify-content: center; min-height: 88px;
   padding: 20px 12px 14px; border: 2px solid var(--edge); border-radius: var(--radius); background: var(--panel);
@@ -113,8 +119,9 @@ audio { display: none; }
 .tile .prog { position: absolute; left: 0; bottom: 0; height: 4px; background: var(--accent); transition: width .25s linear; }
 .tile.fav { min-height: 104px; }
 .tile.empty { border-style: dashed; color: var(--muted); cursor: default; }
+.cell.tennie { grid-column: span 1; grid-row: span 2; }
 .tile.tennie {
-  grid-column: span 1; grid-row: span 2; min-height: 104px; border: 3px solid var(--red); font-size: 24px; font-weight: 800; color: #f2c8bd;
+  min-height: 104px; border: 3px solid var(--red); font-size: 24px; font-weight: 800; color: #f2c8bd;
   background: linear-gradient(180deg, rgba(192, 71, 47, .22), rgba(192, 71, 47, .06));
 }
 .tile.tennie .key { color: var(--red); }
@@ -129,6 +136,24 @@ audio { display: none; }
 .tile.error { border-style: dashed; border-color: var(--red); }
 .tile.error .badge { color: var(--red); }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* A tile the DM saved: a dot saying it is his, and a Delete that needs a second tap.
+   The extra bottom padding keeps a long line from running under them. */
+.tile.owned { padding-bottom: 30px; }
+.own { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.mine { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(0, 0, 0, .3); }
+.del {
+  height: 28px; min-width: 28px; padding: 0 7px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--panel2); color: var(--muted); font-size: 14px; line-height: 1;
+}
+.del.armed { border-color: var(--red); background: rgba(192, 71, 47, .18); color: #f0a08e; font-size: 11px; font-weight: 700; }
+
+/* A freshly saved tile flashes twice, so the DM sees which category it landed in. */
+@keyframes flash { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px var(--accent); } }
+.tile.flash { animation: flash .5s ease-in-out 2; }
+/* A long press pulses instead of playing: the press was taken, the line is now in the box. */
+@keyframes pulse { 0% { transform: scale(1); } 45% { transform: scale(.93); } 100% { transform: scale(1); } }
+.tile.pulse { animation: pulse .24s ease-out; }
 
 /* ---------- Sticky bottom: improv bar + last-10 strip ---------- */
 .bottom {
@@ -156,6 +181,12 @@ audio { display: none; }
   border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); color: var(--ink);
 }
 .fix .ico { width: 22px; height: 22px; }
+/* Star: save the typed line as a tile (Ctrl+S). Same box as the pencil, one baseline. */
+.save {
+  flex: none; display: grid; place-items: center; width: 48px; min-height: 48px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); color: var(--ink);
+}
+.save .ico { width: 22px; height: 22px; }
 .fix .spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--edge); border-top-color: var(--accent);
   animation: spin .9s linear infinite;
@@ -198,6 +229,9 @@ audio { display: none; }
 .item .lbl { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item button { min-height: 36px; min-width: 36px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--edge); font-size: 12px; }
 .item button.on { border-color: var(--accent); color: var(--accent); }
+/* Save a line that already landed well: the same star as the improv bar, at strip size. */
+.item .star { display: grid; place-items: center; padding: 0; color: var(--muted); }
+.item .star .ico { width: 16px; height: 16px; }
 .ldot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--edge); }
 .ldot.green { background: var(--green); }
 .ldot.amber { background: var(--amber); }
@@ -208,6 +242,7 @@ audio { display: none; }
   .tile:hover, .voice:hover, .tab:hover { border-color: var(--accent2); }
   .tile.tennie:hover { border-color: #e0664a; }
   .item button:hover { border-color: var(--accent); }
+  .del:hover { border-color: var(--red); color: #f0a08e; }
 }
 
 /* ---------- Tablet (< 900 px): single column ---------- */
@@ -221,8 +256,10 @@ audio { display: none; }
   .roster { flex-direction: row; overflow-x: auto; gap: 8px; padding-bottom: 4px; }
   .voice { flex: none; min-width: 150px; }
   .favs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .tile.tennie { grid-column: 1 / -1; grid-row: auto; min-height: 72px; }
+  .cell.tennie { grid-column: 1 / -1; grid-row: auto; }
+  .tile.tennie { min-height: 72px; }
   .grid { grid-template-columns: 1fr; }
+  .del { height: 36px; min-width: 36px; }         /* a finger needs the room; the confirm step guards the rest */
   .improv { flex-wrap: wrap; }
   .improv .line { flex-basis: 100%; }
   .improv .count { order: 3; margin-left: auto; }
@@ -249,3 +286,141 @@ audio { display: none; }
 .sbar { width: min(80vw, 420px); height: 6px; border-radius: 3px; background: var(--edge); overflow: hidden; }
 .sbar i { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
 .speaker .banner { margin: 0; }
+
+/* =============================================================================
+   CREATOR BLOCK - owned by the creator-web builder (M4): web/creator.html and
+   web/creator.js only. Nothing above this line belongs to it and nothing here is
+   used by the Play or Speaker pages, so the two style sheets can never collide:
+   every selector below is either prefixed `cr-` or scoped inside `.cr-page`.
+   Keep this block last in the file. Do not edit anything above it.
+   ========================================================================== */
+.cr-page { display: flex; flex-direction: column; min-height: 100vh; }
+.cr-page a { color: var(--accent); }
+.cr-back { margin-left: auto; font-size: 14px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.cr-main { width: min(760px, 100%); margin: 0 auto; padding: 12px 14px 40px; display: flex; flex-direction: column; gap: 10px; }
+
+/* Step rail: five chips that say where the draft stands; a step out of reach is not clickable. */
+.cr-steps { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
+.cr-chip {
+  flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--edge); border-radius: 999px;
+  background: var(--panel); font-size: 13px; white-space: nowrap; color: var(--muted);
+}
+.cr-chip.on { background: var(--accent); color: #1a130a; border-color: var(--accent); font-weight: 600; }
+.cr-chip:disabled { opacity: .4; }
+
+/* One step. Collapsed it keeps its summary line, so a finished step still says what it decided. */
+.cr-step { border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.cr-step.open { border-color: var(--accent2); }
+.cr-step.locked { opacity: .55; }
+.cr-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--tap);
+  padding: 10px 14px; text-align: left; background: var(--panel2);
+}
+.cr-num {
+  width: 26px; height: 26px; flex: none; border-radius: 50%; background: var(--accent2); color: var(--ink);
+  display: grid; place-items: center; font-weight: 700; font-size: 13px;
+}
+.cr-step.open .cr-num { background: var(--accent); color: #1a130a; }
+.cr-title { flex: none; font-weight: 600; }
+.cr-sum {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--muted); text-align: right;
+}
+.cr-body { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-top: 1px solid var(--edge); }
+
+/* Controls: the Play page's inputs. A row holds either fields or buttons, never both,
+   so bottom alignment has one meaning; the reserved hint line keeps fields equal height. */
+.cr-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.cr-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+.cr-lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.cr-hint { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.cr-field .cr-hint { min-height: 16px; }
+.cr-page .pills { width: max-content; }         /* two pills, not a stretched box with an empty half */
+.cr-input, .cr-area, .cr-out {
+  width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--panel2); color: var(--ink); font: inherit; font-size: 15px;
+}
+.cr-area { min-height: 96px; line-height: 1.4; resize: vertical; }
+.cr-input:focus, .cr-area:focus { border-color: var(--accent); outline: none; }
+.cr-input.bad, .cr-out.bad { border-color: var(--red); color: #f0a08e; }
+.cr-input.short { max-width: 110px; }
+.cr-out { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cr-btn {
+  flex: none; display: inline-grid; place-items: center; min-height: 44px; padding: 0 16px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); font-size: 15px;
+}
+.cr-btn.go { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.cr-btn.ghost { color: var(--muted); }
+.cr-page .speak { display: inline-grid; place-items: center; text-decoration: none; }
+/* wrap: on a tablet the Next button owns the whole row, so its reason moves to a line of its own */
+.cr-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 2px; }
+.cr-spin {
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--edge); border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+}
+
+/* Step 1: the drop zone covers its own file input so the whole card is the target. */
+.cr-drop {
+  position: relative; display: grid; place-items: center; gap: 6px; min-height: 116px; padding: 18px;
+  border: 2px dashed var(--edge); border-radius: var(--radius); background: var(--panel2); text-align: center;
+}
+.cr-drop.over { border-color: var(--accent); background: rgba(201, 150, 47, .1); }
+.cr-file { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.cr-band { font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums; }
+.cr-drafts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cr-drafts .tab { display: inline-flex; align-items: center; font-size: 13px; text-decoration: none; }
+
+/* Steps 3 and 4: category chips and the phrase rows, every line editable in place. */
+.cr-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.cr-cat { display: flex; align-items: center; gap: 4px; }
+.cr-cat .cr-input { width: auto; min-width: 150px; }
+.cr-sig {
+  flex: none; padding: 3px 8px; border-radius: 999px; background: var(--accent2); color: var(--ink);
+  font-size: 11px; text-transform: uppercase; letter-spacing: .4px;
+}
+.cr-x {
+  flex: none; width: 36px; min-height: 36px; border: 1px solid var(--edge); border-radius: 8px;
+  color: var(--muted); font-size: 14px; line-height: 1;
+}
+.cr-add { display: flex; gap: 6px; margin-top: 6px; }
+.cr-catbox { border-top: 1px solid var(--edge); padding-top: 10px; }
+.cr-catbox h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 16px; }
+.cr-count {
+  min-width: 26px; padding: 2px 8px; border: 1px solid var(--edge); border-radius: 999px; background: var(--panel2);
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: center;
+}
+.cr-count.thin { border-color: var(--amber); color: var(--amber); }
+.cr-warn { margin: 0 0 8px; font-size: 12px; color: var(--amber); }
+.cr-lines { display: flex; flex-direction: column; gap: 6px; }
+.cr-line { display: flex; align-items: center; gap: 6px; }
+
+/* Step 5: the commit progress and the card that ends the whole thing. */
+.cr-prog { display: flex; flex-direction: column; gap: 6px; }
+.cr-bar { height: 8px; border-radius: 4px; background: var(--edge); overflow: hidden; }
+.cr-bar i { display: block; height: 100%; background: var(--accent); transition: width .25s linear; }
+.cr-gate { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0; }
+.cr-gate div { padding: 8px 10px; border: 1px solid var(--edge); border-radius: 10px; background: var(--panel2); }
+.cr-gate dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.cr-gate dd { margin: 2px 0 0; font-size: 17px; font-variant-numeric: tabular-nums; }
+/* align-items: flex-start lets the link hug its label, so the grid has to claim the width back. */
+.cr-done { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.cr-done .cr-gate { width: 100%; }
+.cr-done h3 { margin: 0; font-size: 20px; }
+.cr-done h3 em { color: var(--accent); font-style: normal; }
+.cr-done p { margin: 0; }
+
+@media (hover: hover) {
+  .cr-btn:hover, .cr-chip:hover:not(:disabled), .cr-x:hover { border-color: var(--accent); }
+}
+
+/* Tablet: every row stacks and a step's summary drops, so the titles keep their width. */
+@media (max-width: 899px) {
+  .cr-main { padding: 10px 10px 32px; }
+  .cr-sum { display: none; }
+  .cr-row { flex-direction: column; align-items: stretch; }
+  .cr-btn, .cr-page .speak { width: 100%; }
+  .cr-add .cr-btn { width: auto; }              /* the add box stays one line: box, then button */
+  .cr-cat .cr-input { min-width: 0; flex: 1; }
+  .cr-back { font-size: 13px; }
+}
+/* --------------------------- end of the creator block --------------------- */

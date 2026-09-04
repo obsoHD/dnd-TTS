@@ -16,16 +16,13 @@ import difflib
 import math
 import re
 import unicodedata
-import warnings
-import wave
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-import requests
-import urllib3
+
+from app import stt
 
 if TYPE_CHECKING:
     from app.canon import Canon
@@ -54,17 +51,6 @@ def _floats(pcm: bytes) -> np.ndarray:
 
 def _dbfs(linear: float) -> float:
     return 20.0 * math.log10(linear) if linear > 0.0 else -math.inf
-
-
-def _wav(pcm: bytes, sr: int) -> bytes:
-    """Wrap PCM in a WAV container; the STT accepts files, not raw samples."""
-    buf = BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sr)
-        w.writeframes(pcm)
-    return buf.getvalue()
 
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -170,33 +156,11 @@ def _norm_for_cer(s: str) -> str:
     return " ".join(s.split())
 
 
-def _stt_url() -> str:
-    """Resolved at call time so this module imports without the service config."""
-    from app.config import STT_URL
-
-    return STT_URL
-
-
-def _transcribe(pcm: bytes, sr: int, lang: str) -> str | None:
-    """Whisper transcript via the lifeos STT, or None when it is down or slower
-    than the table budget. The endpoint is self-signed by design, hence
-    ``verify=False`` with its warning silenced for this call only."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
-            r = requests.post(_stt_url(), files={"audio": ("take.wav", _wav(pcm, sr), "audio/wav")},
-                              data={"lang": lang}, timeout=STT_TIMEOUT_S, verify=False)
-        r.raise_for_status()
-        return str((r.json() or {}).get("text", "")).strip()
-    except (requests.RequestException, ValueError):
-        return None
-
-
 def cer(pcm: bytes, sr: int, spoken: str, lang: str) -> float | None:
     """Character error rate of whisper's transcript against the intended text,
     or None when the STT is unavailable: the gate never blocks speaking, it only
     withholds the "verified" mark."""
-    heard = _transcribe(pcm, sr, lang)
+    heard = stt.transcribe(pcm, sr, lang, timeout=STT_TIMEOUT_S)
     if heard is None:
         return None
     expected, got = _norm_for_cer(spoken), _norm_for_cer(heard)

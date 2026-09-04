@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 import requests
 
-from app import gate
+from app import gate, stt, store
 
 SR = 24_000
 SPOKEN = "Ten nie."          # 2 syllables
@@ -88,8 +88,11 @@ def _stub_stt(monkeypatch: pytest.MonkeyPatch, replies: list) -> list[dict]:
             raise reply
         return _Response(reply)
 
-    monkeypatch.setattr(gate.requests, "post", post)
-    monkeypatch.setattr(gate, "_stt_url", lambda: "https://stt.test/stt")
+    # The gate posts through app.stt, the one whisper client it shares with the
+    # Voice Creator, so the stub goes there and still proves the gate's own
+    # timeout and payload reach the endpoint.
+    monkeypatch.setattr(stt.requests, "post", post)
+    monkeypatch.setattr(stt, "_url", lambda: "https://stt.test/stt")
     return calls
 
 
@@ -310,7 +313,7 @@ def test_speaker_gate_is_lazy_about_resemblyzer(monkeypatch, tmp_path):
 
 def test_speaker_gate_caches_reference_embedding_and_scores_cosine(tmp_path, fake_resemblyzer):
     ref = tmp_path / "ref.wav"
-    ref.write_bytes(gate._wav(_sine(1.0), SR))
+    ref.write_bytes(store.wav_bytes(_sine(1.0), SR))
     fake_resemblyzer[100] = [1.0, 0.0]            # the reference
     fake_resemblyzer[SR] = [1.0, 0.0]             # a 1 s take: same speaker
     fake_resemblyzer[SR // 2] = [0.0, 1.0]        # a 0.5 s take: someone else

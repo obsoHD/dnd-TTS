@@ -17,6 +17,8 @@ from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection, Row
 
+import yaml
+
 from app import canon, config, store
 
 SLOTS = 8               # the favourites row: keys 1-8
@@ -34,16 +36,56 @@ SIGNATURE_CATEGORY = {
 }
 BANK_KEY = {"male": "npc", "female": "npc"}       # every other voice is its own bank key
 
+# Where a DM's own line lands when no category is given (§2). It is free text
+# picked by no one, so it can never collide with a bank's signature category
+# and is deliberately left out of ``_seed_favourites``'s bank-only sweep.
+SAVED_CATEGORY = {"sk": "Moje", "en": "Mine"}
+
 
 def signature_category(voice_id: str, lang: str) -> str | None:
-    """The signature category for this voice, or None for a voice with no bank."""
-    return SIGNATURE_CATEGORY.get(lang, {}).get(BANK_KEY.get(voice_id, voice_id))
+    """The signature category for this voice, or None for a voice with no bank.
+    The four built-in voices are hard-coded; a voice made later by the Creator
+    gets its own entry written to ``voice.yaml`` by ``set_signature``, so this
+    stays data-driven with no code change per new voice."""
+    builtin = SIGNATURE_CATEGORY.get(lang, {}).get(BANK_KEY.get(voice_id, voice_id))
+    return builtin if builtin is not None else _yaml_signature(voice_id, lang)
+
+
+def _voice_yaml_path(voice_id: str) -> Path:
+    return config.voice_dir(voice_id) / "voice.yaml"
+
+
+def _yaml_signature(voice_id: str, lang: str) -> str | None:
+    path = _voice_yaml_path(voice_id)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return (data.get("signature_category") or {}).get(lang)
+
+
+def set_signature(voice_id: str, lang: str, category: str) -> None:
+    """Persist ``voice_id``'s signature category for ``lang`` into its
+    ``voice.yaml`` (a ``signature_category: {sk: ..., en: ...}`` block), so
+    ``signature_category`` picks it up for a voice the Creator makes without
+    touching this module. Written directly (not through ``app.voices.Voice``,
+    which has no field for it) so every other key in the file is preserved."""
+    path = _voice_yaml_path(voice_id)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else None
+    data = dict(data or {"id": voice_id})
+    signatures = dict(data.get("signature_category") or {})
+    signatures[lang] = category
+    data["signature_category"] = signatures
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".yaml.tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    tmp.replace(path)
+
 
 # One row per tile, joined to the pinned render because a tile's state is
 # nothing but that render's verdict. Bank order is insertion order; ``rowid``
 # breaks ties inside the same millisecond.
 _LINE_SQL = """
-SELECT l.id, l.voice_id, l.lang, l.text, l.category, l.favourite, l.slot,
+SELECT l.id, l.voice_id, l.lang, l.text, l.category, l.favourite, l.slot, l.source,
        r.id AS render_id, r.gate, r.verified, r.take_no
 FROM lines l LEFT JOIN renders r ON r.id = l.active_render_id
 """
@@ -52,6 +94,10 @@ _BOARD_SQL = _LINE_SQL + " WHERE l.voice_id=? AND l.lang=? ORDER BY l.created, l
 
 class LineNotFound(KeyError):
     """No line row with that id; the API maps this to 404."""
+
+
+class BankLine(ValueError):
+    """A bank line was asked to delete itself; the API maps this to 409."""
 
 
 def ensure_columns() -> None:
@@ -194,14 +240,31 @@ def _place(con: Connection, voice_id: str, lang: str, line_id: str, slot: int) -
     con.execute("UPDATE lines SET slot=?, favourite=1 WHERE id=?", (slot, line_id))
 
 
-def add_line(voice_id: str, lang: str, category: str, text: str, source: str = "improv") -> dict:
+def add_line(voice_id: str, lang: str, category: str | None, text: str, source: str = "improv") -> dict:
     """Save a line the DM typed (or dictated, scripted, kept from Suggest) into
     the board. It is checked the way the render will check it, so a line that
     can never render (empty, over the spoken-character cap) is refused here
-    with the same error instead of failing later on the queue."""
+    with the same error instead of failing later on the queue. No category
+    means the DM just hit save on something improvised: it lands in
+    ``SAVED_CATEGORY`` for the line's language. The id hashes voice+lang+
+    category+text, so saving the same line into the same category twice
+    returns the one tile it already made instead of a duplicate."""
     clean = _clean(text, "text")
     canon.canonicalize(clean, lang=lang)
-    return get_line(store.upsert_line(voice_id, lang, _clean(category, "category"), clean, source))
+    cat = _clean(category, "category") if category else SAVED_CATEGORY.get(lang, SAVED_CATEGORY["sk"])
+    return get_line(store.upsert_line(voice_id, lang, cat, clean, source))
+
+
+def delete_line(line_id: str) -> None:
+    """Remove a line the DM saved. A bank line is permanent furniture, never
+    the DM's to delete, so it refuses with ``BankLine`` (409); its renders are
+    never touched here -- only the board row goes, so an old take already
+    played stays in the store under its own render id."""
+    with closing(store.db()) as con, con:
+        row = _row(con, line_id)
+        if row["source"] == "bank":
+            raise BankLine(line_id)
+        con.execute("DELETE FROM lines WHERE id=?", (line_id,))
 
 
 def _clean(value: str, what: str) -> str:

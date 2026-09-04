@@ -20,6 +20,13 @@ const BARE_LABEL = 'normálne';
 const DELIVERY_KEY = 'bag.delivery';
 /** Used until GET /api/deliveries answers: the bar must stay usable when the writer router is absent. */
 const BARE_ONLY = [{ id: BARE, label: BARE_LABEL, token: '', armed: true, measured: false }];
+const LONG_PRESS_MS = 450;   // hold a tile this long and it is edited instead of spoken
+const PRESS_SLOP = 10;       // px of drift a press tolerates before it counts as a scroll
+const PULSE_MS = 260;        // how long an edited tile keeps its pulse class
+const FLASH_MS = 1500;       // how long a freshly saved tile keeps its ring
+const CONFIRM_MS = 4000;     // an armed Delete disarms itself: no tile is left one stray tap from gone
+/** Where a saved line lands. The server owns the default; this is only how a tile is read back. */
+const SAVED_CATEGORY = { sk: 'Moje', en: 'Mine' };
 const audio = document.getElementById('audio');
 
 /* ---------------- helpers ---------------- */
@@ -113,6 +120,55 @@ function armAudio(el) {
 const isTyping = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
 const initials = (label) => label.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase();
 
+/** A tile the DM saved himself. The board marks such a line with a source that is not
+ *  the bank; while that field is absent the saved category carries the same meaning,
+ *  because nothing but a save ever puts a line there. */
+const isOwnLine = (line, lang) => (line.source ? line.source !== 'bank' : line.category === SAVED_CATEGORY[lang]);
+
+/* ---------------- long press ---------------- */
+
+/** The one press in flight. It lives outside the component tree on purpose: a press is
+ *  a gesture, not a fact about the board, and holding it in state would restart the
+ *  timer on every unrelated re-render (during a pre-render, job events land constantly). */
+const press = { id: null, timer: null, x: 0, y: 0, fired: false };
+
+function cancelPress() {
+  clearTimeout(press.timer);
+  press.timer = null;
+  press.id = null;
+}
+
+/** True once, for the click that follows a fired long press, so the line is not also spoken. */
+function tookFired() {
+  const was = press.fired;
+  press.fired = false;
+  return was;
+}
+
+/** Pointer props for a tile: a short press plays, a hold edits. Pointer events and not
+ *  touch or mouse ones, so a finger, a pen and a mouse all behave the same. */
+function pressProps(onTap, onHold) {
+  return {
+    onPointerDown: (e) => {
+      // a second pointer (two fingers) or a non-primary button cancels instead of starting a rival press
+      if (press.timer || (e.button != null && e.button > 0)) return cancelPress();
+      press.id = e.pointerId;
+      press.x = e.clientX;
+      press.y = e.clientY;
+      press.fired = false;
+      press.timer = setTimeout(() => { press.timer = null; press.fired = true; onHold(); }, LONG_PRESS_MS);
+    },
+    onPointerMove: (e) => {
+      if (press.id !== e.pointerId || !press.timer) return;
+      if (Math.abs(e.clientX - press.x) > PRESS_SLOP || Math.abs(e.clientY - press.y) > PRESS_SLOP) cancelPress();
+    },
+    onPointerUp: () => cancelPress(),
+    onPointerCancel: () => cancelPress(),
+    onContextMenu: (e) => e.preventDefault(),   // a long touch must edit the tile, not open the browser menu
+    onClick: (e) => { if (tookFired()) { e.preventDefault(); return; } onTap(); },
+  };
+}
+
 /* ---------------- delivery selection ---------------- */
 
 /** The delivery is per voice, so one map survives reloads; a private window simply gets bare every time. */
@@ -203,32 +259,48 @@ function VoiceCard({ voice }) {
   return html`<section class="card"><h2>${voice.label}</h2><div class="meta">${flags.join(' / ')}</div></section>`;
 }
 
+/** The roster ends with the way to a new voice; everything past that link is the Creator's. */
 function Roster({ voices, active, onPick }) {
-  return html`<nav class="roster">${voices.map((v, i) => html`
+  return html`<nav class="roster">
+    ${voices.map((v, i) => html`
     <button key=${v.id} class="voice ${v.id === active ? 'on' : ''}" onClick=${() => onPick(v.id)}>
       <span class="ini">${initials(v.label)}</span>
       <span class="nm">${v.label}<small>${v.lang}${v.locked ? '' : ' / unlocked'}</small></span>
-      ${i < 9 && html`<span class="key">Shift+${i + 1}</span>`}
-    </button>`)}</nav>`;
+      ${i < 9 && html`<span class="key">Alt+${i + 1}</span>`}
+    </button>`)}
+    <a class="voice new" href="/creator"><span class="ini">+</span><span class="nm">nový hlas</span></a>
+  </nav>`;
 }
 
-function Tile({ line, job, state, progress, cls = '', keyLabel, onTap }) {
+/** A tile is a button, so its own-tile controls are a sibling inside the cell: a button
+ *  nested in a button is invalid and swallows the tap meant for the tile. */
+function Tile({ line, job, state, progress, cls = '', keyLabel, own, armed, flash, pulse, onTap, onEdit, onDelete }) {
   const secs = job?.started ? Math.max(0, Math.round((Date.now() - job.started) / 1000)) : 0;
   const badge = state === 'queued' ? (job?.position != null ? `#${job.position}` : 'queued')
     : state === 'rendering' ? `${job?.stage || 'render'} ${secs}s`
     : state === 'error' ? 'tap to retry'
     : state === 'unverified' ? 'unverified'
     : state === 'gate-failed' ? 'gate failed' : null;
-  return html`<button class="tile ${cls} ${state}" onClick=${onTap} title=${line.text}>
-    ${keyLabel != null && html`<span class="key">${keyLabel}</span>`}
-    <span class="txt">${line.text}</span>
-    ${badge && html`<span class="badge">${badge}</span>`}
-    ${state === 'rendering' && html`<span class="spin"></span>`}
-    ${state === 'playing' && html`<span class="prog" style=${`width:${Math.round(progress * 100)}%`}></span>`}
-  </button>`;
+  const marks = `${state}${own ? ' owned' : ''}${flash ? ' flash' : ''}${pulse ? ' pulse' : ''}`;
+  return html`<div class="cell ${cls}">
+    <button class="tile ${cls} ${marks}" title=${line.text} ...${pressProps(onTap, onEdit)}>
+      ${keyLabel != null && html`<span class="key">${keyLabel}</span>`}
+      <span class="txt">${line.text}</span>
+      ${badge && html`<span class="badge">${badge}</span>`}
+      ${state === 'rendering' && html`<span class="spin"></span>`}
+      ${state === 'playing' && html`<span class="prog" style=${`width:${Math.round(progress * 100)}%`}></span>`}
+    </button>
+    ${own && html`<span class="own">
+      <span class="mine" title="tvoja fráza"></span>
+      <button class="del ${armed ? 'armed' : ''}" title=${armed ? 'potvrdiť zmazanie' : 'zmazať frázu'}
+        aria-label=${armed ? 'potvrdiť zmazanie' : 'zmazať frázu'} onClick=${onDelete}>${armed ? 'zmazať?' : '×'}</button>
+    </span>`}
+  </div>`;
 }
 
-const EmptyTile = ({ cls, keyLabel, text }) => html`<div class="tile ${cls} empty"><span class="key">${keyLabel}</span><span class="txt">${text}</span></div>`;
+const EmptyTile = ({ cls, keyLabel, text }) => html`<div class="cell ${cls}">
+  <div class="tile ${cls} empty"><span class="key">${keyLabel}</span><span class="txt">${text}</span></div>
+</div>`;
 
 function Favourites({ board, tile }) {
   const ten = tenLine(board);
@@ -255,6 +327,11 @@ const Pencil = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true
   <path d="M14.4 6.3l3.3 3.3" fill="none" stroke="currentColor" stroke-width="1.8" />
 </svg>`;
 
+const Star = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+  <path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"
+        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+</svg>`;
+
 const Gear = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
   <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8" />
   <path d="M12 2.6v2.6M12 18.8v2.6M21.4 12h-2.6M5.2 12H2.6M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8M18.6 18.6l-1.8-1.8M7.2 7.2L5.4 5.4"
@@ -277,8 +354,8 @@ function DeliveryPill({ items, value, open, onToggle, onPick }) {
 }
 
 /** Returns an array so the ghost line sits under the bar without nesting it inside the flex row. */
-function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fixUndo, fixNote, brainDown,
-                    onText, onLang, onSpeak, onDelivery, onDeliveryToggle, onFix, onUndo }) {
+function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fixUndo, fixNote, brainDown, boxRef,
+                    onText, onLang, onSpeak, onSave, onDelivery, onDeliveryToggle, onFix, onUndo }) {
   const undoKey = (e) => {
     if (!e.ctrlKey || e.key.toLowerCase() !== 'z' || fixUndo === null) return;
     e.preventDefault();                       // the browser's own undo would fight the replacement
@@ -287,12 +364,14 @@ function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fix
   return [
     html`<div class="improv">
       <input class="line" type="text" maxlength=${LIMIT} autocomplete="off" spellcheck="false"
-        placeholder="type a line, Enter speaks" value=${text} readOnly=${fixing}
+        placeholder="type a line, Enter speaks" value=${text} readOnly=${fixing} ref=${boxRef}
         onInput=${(e) => onText(e.target.value)} onKeyDown=${undoKey} />
       <button class="fix" title="Opraviť (Ctrl+Enter opraví a povie)" aria-label="opraviť"
         disabled=${fixing || brainDown || !text.trim()} onClick=${onFix}>
         ${fixing ? html`<span class="spin"></span>` : html`<${Pencil} />`}
       </button>
+      <button class="save" title="Uložiť ako dlaždicu (Ctrl+S)" aria-label="uložiť"
+        disabled=${!text.trim()} onClick=${onSave}><${Star} /></button>
       <span class="count ${text.length > LIMIT - 20 ? 'warn' : ''}">${text.length}/${LIMIT}</span>
       <${DeliveryPill} items=${deliveries} value=${delivery} open=${deliveryOpen}
         onToggle=${onDeliveryToggle} onPick=${onDelivery} />
@@ -308,8 +387,8 @@ function ImprovBar({ text, lang, delivery, deliveries, deliveryOpen, fixing, fix
   ];
 }
 
-function LastTen({ items, meta, onReplay, onRegen, onPin }) {
-  if (!items.length) return html`<div class="last none">the last ${LAST_N} played lines land here: Replay / Regen / Pin</div>`;
+function LastTen({ items, meta, onReplay, onRegen, onPin, onSave }) {
+  if (!items.length) return html`<div class="last none">the last ${LAST_N} played lines land here: Replay / Regen / Pin / Save</div>`;
   return html`<div class="last">${items.map((it) => {
     const m = meta[it.render_id] || {};
     const dot = m.gate === 'failed' ? 'red' : m.verified === false ? 'amber' : m.gate === 'pass' ? 'green' : '';
@@ -319,6 +398,7 @@ function LastTen({ items, meta, onReplay, onRegen, onPin }) {
       <button onClick=${() => onReplay(it)}>Replay</button>
       <button onClick=${() => onRegen(it)} title="take +1">Regen</button>
       <button class=${m.pinned ? 'on' : ''} disabled=${!m.line_id} onClick=${() => onPin(it)} title="Ctrl+P pins the last one">${m.pinned ? 'Pinned' : 'Pin'}</button>
+      <button class="star" onClick=${() => onSave(it)} aria-label="uložiť ako dlaždicu" title="Uložiť ako dlaždicu"><${Star} /></button>
     </div>`;
   })}</div>`;
 }
@@ -336,8 +416,11 @@ class App extends Component {
     // improv bar: the chosen delivery for the active voice, and the pencil's one-shot undo
     deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false,
     fixing: false, fixUndo: null, fixNote: null, brainDown: false,
+    // one-shot tile marks: the saved tile's flash, the edited tile's pulse, the armed Delete
+    flash: null, pulse: null, confirmDelete: null,
   };
   id = clientId();
+  box = null;            // the improv input, so a long-pressed tile can put the caret in it
 
   componentDidMount() {
     armAudio(audio);
@@ -347,6 +430,7 @@ class App extends Component {
     // pointerdown, not click: the popover must be gone before the press lands anywhere else
     window.addEventListener('pointerdown', (e) => {
       if (this.state.deliveryOpen && !e.target.closest?.('.delivery')) this.setState({ deliveryOpen: false });
+      if (this.state.confirmDelete && !e.target.closest?.('.own')) this.setState({ confirmDelete: null });
     });
     this.sock = openSocket(wsUrl(this.id), {
       open: () => { this.setState({ wsUp: true }); this.boot(); },
@@ -367,7 +451,11 @@ class App extends Component {
     try {
       const voices = await api('GET', '/api/voices');
       const kept = this.state.voice && voices.find((v) => v.id === this.state.voice.id);
-      const voice = kept || voices.find((v) => v.id === 'bag') || voices.find((v) => v.locked) || voices[0] || null;
+      // The Creator hands the DM its finished voice as /?voice=<id>. It can only win
+      // on the very first boot: from the second one on `kept` holds whatever voice is
+      // actually on screen, so a reconnect never yanks the table back to that link.
+      const asked = voices.find((v) => v.id === new URLSearchParams(location.search).get('voice'));
+      const voice = kept || asked || voices.find((v) => v.id === 'bag') || voices.find((v) => v.locked) || voices[0] || null;
       this.setState({ voices, voice, lang: kept ? this.state.lang : voice?.lang || 'sk', error: null }, () => this.loadBoard());
       this.loadDeliveries(voice, true);
       this.setState({ player: await api('GET', '/api/player') });
@@ -526,11 +614,14 @@ class App extends Component {
 
   /* ---- actions ---- */
 
-  /** `delivery` is sent only when the improv bar asked for a spice: board tiles stay bare by contract. */
+  /** `delivery` is sent only when the improv bar asked for a spice: board tiles stay bare by contract.
+   *  `line_id` travels with every render that belongs to a tile, because that is what makes the server
+   *  adopt the render for the line; without it the tile lights up locally and goes grey on the next board read. */
   async say({ text, lineId, label, takeNo = 0, delivery = null }) {
     const { voice, lang } = this.state;
     if (!voice || !text.trim()) return;
     const body = { voice: voice.id, text, lang, priority: 'live', take_no: takeNo };
+    if (lineId) body.line_id = lineId;
     if (delivery && delivery !== BARE) body.delivery = delivery;
     try {
       const r = await api('POST', '/api/say', body);
@@ -554,6 +645,49 @@ class App extends Component {
       return this.play(line.render_id, line.text);
     }
     this.say({ text: line.text, lineId: line.id, label: line.text });
+  }
+
+  /** Long press, or Shift and the tile's key: the line lands in the improv box instead of
+   *  being spoken, so a bank line can be bent to what is actually happening at the table. */
+  editLine(line) {
+    if (!line) return;
+    clearTimeout(this.pulseTimer);
+    this.pulseTimer = setTimeout(() => this.setState({ pulse: null }), PULSE_MS);
+    this.setState({ text: line.text, fixUndo: null, fixNote: null, pulse: line.id }, () => {
+      const box = this.box;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);   // caret at the end: the DM edits the tail
+    });
+  }
+
+  /** The star: the text becomes a tile of the DM's own. The server picks the saved category and
+   *  returns the line that already exists when the same text is saved twice, so this cannot
+   *  make a duplicate tile; the board is re-read because the category itself may be new. */
+  async saveLine(text) {
+    const { voice, lang } = this.state;
+    const clean = (text || '').trim();
+    if (!voice || !clean) return;
+    try {
+      const line = await api('POST', '/api/lines', { voice: voice.id, lang, text: clean });
+      clearTimeout(this.flashTimer);
+      this.flashTimer = setTimeout(() => this.setState({ flash: null }), FLASH_MS);
+      this.setState({ tab: line.category, flash: line.id });
+      await this.loadBoard();
+    } catch (e) { this.fail(e); }
+  }
+
+  /** Two taps, because a line the DM wrote is gone for good. The armed state expires on its
+   *  own and on the next press elsewhere, so no tile is left one stray tap from deletion. */
+  askDelete(line) {
+    clearTimeout(this.confirmTimer);
+    if (this.state.confirmDelete !== line.id) {
+      this.confirmTimer = setTimeout(() => this.setState({ confirmDelete: null }), CONFIRM_MS);
+      this.setState({ confirmDelete: line.id });
+      return;
+    }
+    this.setState({ confirmDelete: null });
+    api('DELETE', `/api/lines/${line.id}`).then(() => this.loadBoard()).catch((e) => this.fail(e));
   }
 
   /** `override` lets Ctrl+Enter speak the text the fix just produced without waiting for a state flush. */
@@ -634,18 +768,27 @@ class App extends Component {
     this.setState({ lang, board: null }, () => this.loadBoard());
   }
 
-  /** Keyboard map from the contract; digits and letters are ignored while typing, Enter and Esc never are. */
+  /** Keyboard map from the contract; digits and letters are ignored while typing, Enter, Esc
+   *  and Ctrl+S never are (Ctrl+S saves the line being typed, so it has to reach the box).
+   *  Voice switching moved to Alt+1..9 because Shift and a tile's key now edits that tile. */
   onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); return this.stop(); }
     if (e.key === 'Enter') { e.preventDefault(); return e.ctrlKey ? this.fixThenSpeak() : this.speak(); }
-    if (isTyping(e.target) || e.altKey || e.metaKey) return;
+    if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); return this.saveLine(this.state.text); }
+    if (isTyping(e.target) || e.metaKey) return;
+    if (e.altKey) {
+      const n = /^Digit([1-9])$/.exec(e.code);
+      if (n && this.state.voices[n[1] - 1]) { e.preventDefault(); this.pickVoice(this.state.voices[n[1] - 1].id); }
+      return;
+    }
     if (e.ctrlKey) {
       if (e.key.toLowerCase() === 'p') { e.preventDefault(); this.pin(this.state.last[0] || {}); }
       return;
     }
     if (e.shiftKey) {
-      const n = /^Digit([1-9])$/.exec(e.code);
-      if (n && this.state.voices[n[1] - 1]) { e.preventDefault(); this.pickVoice(this.state.voices[n[1] - 1].id); }
+      const n = /^Digit([1-8])$/.exec(e.code);
+      if (n) { e.preventDefault(); return this.editLine(favLine(this.state.board, +n[1])); }
+      if (e.code === 'KeyT') { e.preventDefault(); return this.editLine(tenLine(this.state.board)); }
       return;
     }
     const k = e.key.toLowerCase();
@@ -667,7 +810,10 @@ class App extends Component {
     const byLine = this.jobByLine();
     const now = s.player?.now || null;
     const tile = (line, extra) => html`<${Tile} line=${line} job=${byLine[line.id]} state=${tileState(line, byLine[line.id], now)}
-      progress=${s.progress} onTap=${() => this.tapLine(line)} ...${extra} />`;
+      progress=${s.progress} own=${isOwnLine(line, s.lang)} armed=${s.confirmDelete === line.id}
+      flash=${s.flash === line.id} pulse=${s.pulse === line.id}
+      onTap=${() => this.tapLine(line)} onEdit=${() => this.editLine(line)}
+      onDelete=${() => this.askDelete(line)} ...${extra} />`;
     const site = bannerFor(s.wsUp, s.ready, s.player);
     // a dead brain outranks the standing warnings (a DM playing locally always has 'no speaker'),
     // but never the two 'bad' ones: a lost socket or a dead TTS is the bigger problem on the table
@@ -694,13 +840,15 @@ class App extends Component {
       <footer class="bottom">
         <${ImprovBar} text=${s.text} lang=${s.lang} delivery=${s.delivery} deliveries=${s.deliveries}
           deliveryOpen=${s.deliveryOpen} fixing=${s.fixing} fixUndo=${s.fixUndo} fixNote=${s.fixNote}
-          brainDown=${s.brainDown} onText=${(text) => this.setState({ text })}
-          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()}
+          brainDown=${s.brainDown} boxRef=${(el) => { this.box = el; }}
+          onText=${(text) => this.setState({ text })}
+          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()} onSave=${() => this.saveLine(s.text)}
           onDelivery=${(id) => this.setDelivery(id)}
           onDeliveryToggle=${() => this.setState((st) => ({ deliveryOpen: !st.deliveryOpen }))}
           onFix=${() => this.fix()} onUndo=${() => this.undoFix()} />
         <${LastTen} items=${s.last} meta=${s.meta} onReplay=${(it) => this.play(it.render_id, it.label)}
-          onRegen=${(it) => this.regenerate(it)} onPin=${(it) => this.pin(it)} />
+          onRegen=${(it) => this.regenerate(it)} onPin=${(it) => this.pin(it)}
+          onSave=${(it) => this.saveLine(s.meta[it.render_id]?.text || it.label)} />
       </footer>
     </div>`;
   }
