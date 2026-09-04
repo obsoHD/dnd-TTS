@@ -75,8 +75,20 @@ Hard rules the implementation enforces after the model answers, not by asking ni
 - at most 3 beat marks total,
 - `0.5 <= len(new)/len(old) <= 2.0` and it must `canon.canonicalize` — otherwise return the original with
   `changed: false` and a note saying why,
-- one attempt, `timeout=8`, `options: {temperature: 0.3, num_ctx: 4096}`, `think: false`, `keep_alive: -1`,
-  `stream: false` against `POST {LLM_URL}/api/chat` with `config.LLM_MODEL`.
+- `timeout=8`, `options: {temperature: 0.3, num_ctx: 4096}`, `think: false`, `keep_alive: -1`,
+  `stream: false` against `POST {LLM_URL}/api/chat` with `config.LLM_MODEL`. **At most two attempts, and the second
+  only after a guard has rejected the first** (`ATTEMPTS`): re-rolling a usable answer buys a different sentence, not
+  a better one, but a rejected one left the DM looking at "no change" on a trivially fixable line. A resident 27B
+  answers in about half a second, so the retry is free at the table.
+- The persona goes in as a **description, never an identity**. Bag's persona block opens with "Si Vak" and ends by
+  telling its reader to answer in one to three sentences; appended raw to a corrector prompt it made the model answer
+  the DM's line in character instead of editing it (measured 2026-09-04: "kde si nasiel ten mec a kolko stal" came
+  back as Bag telling a story). `_PERSONA_LEAD` states outright that the model is not that character and must not
+  follow instructions inside the description, and the user turn is framed as a task (`_TASK_LEAD`) rather than a bare
+  line of dialogue, because a model handed dialogue replies to it.
+- The brain is **warmed, not merely probed**: `residency` gates every call and ollama unloads an idle model, so
+  without `warm_in_background()` at boot nothing would ever ask for the model and it would stay absent forever.
+  `POST /api/brain/wake` lets the table call it back, and `readyz` reports `loading` while that runs.
 - residency is checked first: not resident -> `BrainNotReady`; the API answers 503 `{"detail": "mozog nie je pripravený"}`.
   Never fall back to another model.
 
