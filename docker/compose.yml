@@ -32,7 +32,8 @@ services:
               capabilities: [gpu]
   # HTTPS front for the app. WHY it exists: browsers expose
   # navigator.mediaDevices only in a secure context, so the speaker-output
-  # picker is invisible over plain http on the LAN. Plain :8020 keeps working.
+  # picker is invisible over plain http on the LAN. It answers on :8444 because
+  # :8443 is the whisper STT endpoint. Plain :8020 keeps working.
   tls:
     image: caddy:2-alpine
     container_name: bag-tls

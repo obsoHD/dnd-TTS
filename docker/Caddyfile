@@ -9,7 +9,7 @@
 	admin off
 }
 
-:8443 {
+:8444 {
 	tls internal
 	reverse_proxy 127.0.0.1:8020 {
 		# The Play and Speaker pages hold a WebSocket for the whole session.
