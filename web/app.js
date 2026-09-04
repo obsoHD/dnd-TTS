@@ -333,9 +333,10 @@ const Star = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 </svg>`;
 
 const Gear = () => html`<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
-  <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8" />
-  <path d="M12 2.6v2.6M12 18.8v2.6M21.4 12h-2.6M5.2 12H2.6M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8M18.6 18.6l-1.8-1.8M7.2 7.2L5.4 5.4"
-        fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+  <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8" />
+  <circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+  <path d="M12 2.2v2.6M12 19.2v2.6M21.8 12h-2.6M4.8 12H2.2M18.9 5.1l-1.9 1.9M7 17l-1.9 1.9M18.9 18.9L17 17M7 7L5.1 5.1"
+        fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
 </svg>`;
 
 /** The gear opens the delivery menu; the popover shows every spice so the DM can see the mechanism, armed or not. */
