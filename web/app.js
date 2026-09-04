@@ -192,6 +192,11 @@ const deliveryLabel = (d) => (!d ? BARE_LABEL : d.id === BARE ? BARE_LABEL : d.l
 const selectable = (d) => d.id === BARE || d.armed;
 const pickable = (items, id) => (items.some((d) => d.id === id && selectable(d)) ? id : BARE);
 
+/** The tone a tile actually plays. A stored tone the Lab no longer arms degrades to a plain
+ *  line instead of a 400 from /api/say: silence at the table is worse than a flat delivery. */
+const lineDelivery = (line) =>
+  (line && line.delivery && line.delivery !== BARE && line.delivery_armed !== false ? line.delivery : null);
+
 /** The brain is usable only while it is resident; anything else keeps the pencil disabled. */
 const brainReady = (ready) => ready?.llm === 'resident' || ready?.llm === true;
 const brainLoading = (ready) => ready?.llm === 'loading';
@@ -275,28 +280,43 @@ function Roster({ voices, active, onPick }) {
   </nav>`;
 }
 
+/** The spice list itself, shared by the improv bar's gear and a tile's own "tón" item, so both
+ *  read the same and an unarmed spice is refused in exactly one place. */
+const DeliveryMenu = ({ items, value, onPick }) => html`<div class="dpop" role="menu">${items.map((d) => html`
+  <button key=${d.id} class="dopt ${d.id === value ? 'on' : ''}" role="menuitem"
+    disabled=${!selectable(d)} onClick=${() => onPick(d.id)}>
+    <span class="dlbl">${deliveryLabel(d)}</span>
+    ${!selectable(d) && html`<small class="dwhy">neoverené v Labe</small>`}
+  </button>`)}</div>`;
+
 /** A tile is a button, so its own-tile controls are a sibling inside the cell: a button
  *  nested in a button is invalid and swallows the tap meant for the tile. */
-function Tile({ line, job, state, progress, cls = '', keyLabel, own, armed, flash, pulse, onTap, onEdit, onDelete }) {
+function Tile({ line, job, state, progress, cls = '', keyLabel, own, armed, tone, deliveries, toneOpen,
+                flash, pulse, onTap, onEdit, onDelete, onTone, onPickTone }) {
   const secs = job?.started ? Math.max(0, Math.round((Date.now() - job.started) / 1000)) : 0;
   const badge = state === 'queued' ? (job?.position != null ? `#${job.position}` : 'queued')
     : state === 'rendering' ? `${job?.stage || 'render'} ${secs}s`
     : state === 'error' ? 'tap to retry'
     : state === 'unverified' ? 'unverified'
     : state === 'gate-failed' ? 'gate failed' : null;
-  const marks = `${state}${own ? ' owned' : ''}${flash ? ' flash' : ''}${pulse ? ' pulse' : ''}`;
+  const marks = `${state}${own ? ' owned' : ''}${tone ? ' toned' : ''}${flash ? ' flash' : ''}${pulse ? ' pulse' : ''}`;
   return html`<div class="cell ${cls}">
     <button class="tile ${cls} ${marks}" title=${line.text} ...${pressProps(onTap, onEdit)}>
       ${keyLabel != null && html`<span class="key">${keyLabel}</span>`}
       <span class="txt">${line.text}</span>
+      ${tone && html`<span class="tone ${tone.armed ? '' : 'off'}"
+        title=${tone.armed ? `prednes: ${tone.label}` : `prednes: ${tone.label} — neoverený v Labe, hrá naplocho`}>${tone.label}</span>`}
       ${badge && html`<span class="badge">${badge}</span>`}
       ${state === 'rendering' && html`<span class="spin"></span>`}
       ${state === 'playing' && html`<span class="prog" style=${`width:${Math.round(progress * 100)}%`}></span>`}
     </button>
     ${own && html`<span class="own">
       <span class="mine" title="tvoja fráza"></span>
+      <button class="retone ${toneOpen ? 'on' : ''}" aria-haspopup="menu" aria-expanded=${toneOpen ? 'true' : 'false'}
+        title="prednes dlaždice" onClick=${onTone}>tón</button>
       <button class="del ${armed ? 'armed' : ''}" title=${armed ? 'potvrdiť zmazanie' : 'zmazať frázu'}
         aria-label=${armed ? 'potvrdiť zmazanie' : 'zmazať frázu'} onClick=${onDelete}>${armed ? 'zmazať?' : '×'}</button>
+      ${toneOpen && html`<${DeliveryMenu} items=${deliveries} value=${line.delivery || BARE} onPick=${onPickTone} />`}
     </span>`}
   </div>`;
 }
@@ -348,12 +368,7 @@ function DeliveryPill({ items, value, open, onToggle, onPick }) {
   return html`<div class="delivery">
     <button class="dsel ${value === BARE ? '' : 'on'}" aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'}
       aria-label="prednes" title=${`prednes: ${deliveryLabel(current)}`} onClick=${onToggle}><${Gear} /></button>
-    ${open && html`<div class="dpop" role="menu">${items.map((d) => html`
-      <button key=${d.id} class="dopt ${d.id === value ? 'on' : ''}" role="menuitem"
-        disabled=${!selectable(d)} onClick=${() => onPick(d.id)}>
-        <span class="dlbl">${deliveryLabel(d)}</span>
-        ${!selectable(d) && html`<small class="dwhy">neoverené v Labe</small>`}
-      </button>`)}</div>`}
+    ${open && html`<${DeliveryMenu} items=${items} value=${value} onPick=${onPick} />`}
   </div>`;
 }
 
@@ -420,8 +435,9 @@ class App extends Component {
     // improv bar: the chosen delivery for the active voice, and the pencil's one-shot undo
     deliveries: BARE_ONLY, delivery: BARE, deliveryOpen: false,
     fixing: false, fixUndo: null, fixNote: null, brainDown: false,
-    // one-shot tile marks: the saved tile's flash, the edited tile's pulse, the armed Delete
-    flash: null, pulse: null, confirmDelete: null,
+    // one-shot tile marks: the saved tile's flash, the edited tile's pulse, the armed Delete,
+    // and the one tile whose "tón" menu is open
+    flash: null, pulse: null, confirmDelete: null, tonePick: null,
   };
   id = clientId();
   box = null;            // the improv input, so a long-pressed tile can put the caret in it
@@ -435,6 +451,7 @@ class App extends Component {
     window.addEventListener('pointerdown', (e) => {
       if (this.state.deliveryOpen && !e.target.closest?.('.delivery')) this.setState({ deliveryOpen: false });
       if (this.state.confirmDelete && !e.target.closest?.('.own')) this.setState({ confirmDelete: null });
+      if (this.state.tonePick && !e.target.closest?.('.own')) this.setState({ tonePick: null });
     });
     this.sock = openSocket(wsUrl(this.id), {
       open: () => { this.setState({ wsUp: true }); this.boot(); },
@@ -618,18 +635,20 @@ class App extends Component {
 
   /* ---- actions ---- */
 
-  /** `delivery` is sent only when the improv bar asked for a spice: board tiles stay bare by contract.
+  /** `delivery` is the spice this render carries: the improv bar's gear, or a tile's own stored tone.
+   *  It is recorded in `meta` so the last-10 star can save the tone the render actually had.
    *  `line_id` travels with every render that belongs to a tile, because that is what makes the server
    *  adopt the render for the line; without it the tile lights up locally and goes grey on the next board read. */
   async say({ text, lineId, label, takeNo = 0, delivery = null }) {
     const { voice, lang } = this.state;
     if (!voice || !text.trim()) return;
+    const tone = delivery || BARE;
     const body = { voice: voice.id, text, lang, priority: 'live', take_no: takeNo };
     if (lineId) body.line_id = lineId;
-    if (delivery && delivery !== BARE) body.delivery = delivery;
+    if (tone !== BARE) body.delivery = tone;
     try {
       const r = await api('POST', '/api/say', body);
-      this.noteMeta(r.render_id, { line_id: lineId, text, take_no: takeNo });
+      this.noteMeta(r.render_id, { line_id: lineId, text, take_no: takeNo, delivery: tone });
       if (r.cached) return this.play(r.render_id, label);
       this.registerJob(r.job_id, { line_id: lineId, label, text, take_no: takeNo, position: r.position, autoplay: true });
     } catch (e) { this.fail(e); }
@@ -639,22 +658,28 @@ class App extends Component {
     try { await api('POST', '/api/play', { render_id: renderId, label }); } catch (e) { this.fail(e); }
   }
 
-  /** Tile tap: ready plays now; anything else asks the worker (cache makes that instant when a pass take exists). */
+  /** Tile tap: ready plays now; anything else asks the worker (cache makes that instant when a pass take exists).
+   *  The tile plays its own tone; the cached path needs no delivery because the render id already
+   *  encodes the toned text, but it still records the tone so a strip star saves what was heard. */
   tapLine(line) {
     if (!line) return;
     const st = tileState(line, this.jobByLine()[line.id], this.state.player?.now);
     if (st === 'queued' || st === 'rendering') return;
+    const tone = lineDelivery(line);
     if ((st === 'ready' || st === 'playing') && line.render_id) {
-      this.noteMeta(line.render_id, { line_id: line.id, text: line.text });
+      this.noteMeta(line.render_id, { line_id: line.id, text: line.text, delivery: tone || BARE });
       return this.play(line.render_id, line.text);
     }
-    this.say({ text: line.text, lineId: line.id, label: line.text });
+    this.say({ text: line.text, lineId: line.id, label: line.text, delivery: tone });
   }
 
   /** Long press, or Shift and the tile's key: the line lands in the improv box instead of
-   *  being spoken, so a bank line can be bent to what is actually happening at the table. */
+   *  being spoken, so a bank line can be bent to what is actually happening at the table.
+   *  The gear follows the tile, so the lifted line is re-spoken the way the tile sounded;
+   *  `setDelivery` falls back to bare when the tile's tone is no longer armed. */
   editLine(line) {
     if (!line) return;
+    this.setDelivery(line.delivery || BARE);
     clearTimeout(this.pulseTimer);
     this.pulseTimer = setTimeout(() => this.setState({ pulse: null }), PULSE_MS);
     this.setState({ text: line.text, fixUndo: null, fixNote: null, pulse: line.id }, () => {
@@ -665,18 +690,41 @@ class App extends Component {
     });
   }
 
-  /** The star: the text becomes a tile of the DM's own. The server picks the saved category and
-   *  returns the line that already exists when the same text is saved twice, so this cannot
-   *  make a duplicate tile; the board is re-read because the category itself may be new. */
-  async saveLine(text) {
+  /** The star: the text becomes a tile of the DM's own, carrying the tone it was saved with. The
+   *  server picks the saved category and returns the line that already exists when the same text is
+   *  saved twice (re-toning that one tile), so this cannot make a duplicate; the board is re-read
+   *  because the category itself may be new. The tone is filtered through `pickable` first: a spice
+   *  disarmed since the render would otherwise turn a save into a 400 and cost the DM the tile. */
+  async saveLine(text, delivery = BARE) {
     const { voice, lang } = this.state;
     const clean = (text || '').trim();
     if (!voice || !clean) return;
     try {
-      const line = await api('POST', '/api/lines', { voice: voice.id, lang, text: clean });
+      const tone = pickable(this.state.deliveries, delivery || BARE);
+      const line = await api('POST', '/api/lines', { voice: voice.id, lang, text: clean, delivery: tone });
       clearTimeout(this.flashTimer);
       this.flashTimer = setTimeout(() => this.setState({ flash: null }), FLASH_MS);
       this.setState({ tab: line.category, flash: line.id });
+      await this.loadBoard();
+    } catch (e) { this.fail(e); }
+  }
+
+  /** The strip's star: the tone that render actually carried. An entry that predates the recording
+   *  (a render played from another tablet, or one this page only read back) has none, so the bar's
+   *  current selection stands in rather than silently flattening the line. */
+  saveFromStrip(it) {
+    const m = this.state.meta[it.render_id] || {};
+    return this.saveLine(m.text || it.label, m.delivery ?? this.state.delivery);
+  }
+
+  /** The tile's own "tón": re-tone this one line. A real change drops the tile's pin server-side, so
+   *  the row that comes back is pending again and the next tap renders the line in its new tone; the
+   *  board is re-read because a re-tone can also be the first line of a category the page lacks. */
+  async setLineDelivery(line, id) {
+    this.setState({ tonePick: null });
+    try {
+      const row = await api('PATCH', `/api/lines/${line.id}`, { delivery: id });
+      this.setState((s) => (s.board ? { board: patchLine(s.board, line.id, row) } : null));
       await this.loadBoard();
     } catch (e) { this.fail(e); }
   }
@@ -784,7 +832,7 @@ class App extends Component {
   onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); return this.stop(); }
     if (e.key === 'Enter') { e.preventDefault(); return e.ctrlKey ? this.fixThenSpeak() : this.speak(); }
-    if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); return this.saveLine(this.state.text); }
+    if (e.ctrlKey && e.key.toLowerCase() === 's') { e.preventDefault(); return this.saveLine(this.state.text, this.state.delivery); }
     if (isTyping(e.target) || e.metaKey) return;
     if (e.altKey) {
       const n = /^Digit([1-9])$/.exec(e.code);
@@ -810,6 +858,14 @@ class App extends Component {
     if (action) { e.preventDefault(); action(); }
   }
 
+  /** What a toned tile shows in its corner: the Slovak label for its stored tone (the raw id if the
+   *  spice list never arrived), and whether the Lab still arms it. A bare tile shows nothing. */
+  toneOf(line) {
+    if (!line.delivery || line.delivery === BARE) return null;
+    const spice = this.state.deliveries.find((d) => d.id === line.delivery);
+    return { label: spice ? deliveryLabel(spice) : line.delivery, armed: line.delivery_armed !== false };
+  }
+
   jobByLine() {
     const out = {};
     for (const j of Object.values(this.state.jobs)) if (j.line_id) out[j.line_id] = j;
@@ -821,9 +877,12 @@ class App extends Component {
     const now = s.player?.now || null;
     const tile = (line, extra) => html`<${Tile} line=${line} job=${byLine[line.id]} state=${tileState(line, byLine[line.id], now)}
       progress=${s.progress} own=${isOwnLine(line, s.lang)} armed=${s.confirmDelete === line.id}
+      tone=${this.toneOf(line)} deliveries=${s.deliveries} toneOpen=${s.tonePick === line.id}
       flash=${s.flash === line.id} pulse=${s.pulse === line.id}
       onTap=${() => this.tapLine(line)} onEdit=${() => this.editLine(line)}
-      onDelete=${() => this.askDelete(line)} ...${extra} />`;
+      onDelete=${() => this.askDelete(line)}
+      onTone=${() => this.setState((st) => ({ tonePick: st.tonePick === line.id ? null : line.id, confirmDelete: null }))}
+      onPickTone=${(id) => this.setLineDelivery(line, id)} ...${extra} />`;
     const site = bannerFor(s.wsUp, s.ready, s.player);
     // a dead brain outranks the standing warnings (a DM playing locally always has 'no speaker'),
     // but never the two 'bad' ones: a lost socket or a dead TTS is the bigger problem on the table
@@ -853,13 +912,13 @@ class App extends Component {
           deliveryOpen=${s.deliveryOpen} fixing=${s.fixing} fixUndo=${s.fixUndo} fixNote=${s.fixNote}
           brainDown=${s.brainDown} boxRef=${(el) => { this.box = el; }}
           onText=${(text) => this.setState({ text })}
-          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()} onSave=${() => this.saveLine(s.text)}
+          onLang=${(l) => this.setLang(l)} onSpeak=${() => this.speak()} onSave=${() => this.saveLine(s.text, s.delivery)}
           onDelivery=${(id) => this.setDelivery(id)}
           onDeliveryToggle=${() => this.setState((st) => ({ deliveryOpen: !st.deliveryOpen }))}
           onFix=${() => this.fix()} onUndo=${() => this.undoFix()} />
         <${LastTen} items=${s.last} meta=${s.meta} onReplay=${(it) => this.play(it.render_id, it.label)}
           onRegen=${(it) => this.regenerate(it)} onPin=${(it) => this.pin(it)}
-          onSave=${(it) => this.saveLine(s.meta[it.render_id]?.text || it.label)} />
+          onSave=${(it) => this.saveFromStrip(it)} />
       </footer>
     </div>`;
   }

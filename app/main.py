@@ -112,7 +112,11 @@ def _enqueue_prerender(app: FastAPI, peers: Peers) -> int:
             line = lines.get(line_id)
             if line is None or line["status"] == "ready":
                 continue
-            app.state.worker.submit(peers.jobs.new_job(PRERENDER_KIND, "batch", v.id, line["text"], line_id=line_id))
+            # board.line_text, not line["text"]: a tile saved with a tone warms
+            # the cache key that tone hashes to, which is the one the tap asks
+            # for. A tone the Lab has since disarmed falls back to the bare line.
+            app.state.worker.submit(peers.jobs.new_job(
+                PRERENDER_KIND, "batch", v.id, peers.board.line_text(line, v), line_id=line_id))
             queued += 1
     return queued
 

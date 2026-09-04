@@ -19,7 +19,8 @@ from sqlite3 import Connection, Row
 
 import yaml
 
-from app import canon, config, store
+from app import canon, config, delivery, store
+from app.voices import Voice, load_voice
 
 SLOTS = 8               # the favourites row: keys 1-8
 DEFAULT_SLOTS = 7       # defaults fill 1-7; slot 8 stays free for the DM's own pick
@@ -85,11 +86,16 @@ def set_signature(voice_id: str, lang: str, category: str) -> None:
 # nothing but that render's verdict. Bank order is insertion order; ``rowid``
 # breaks ties inside the same millisecond.
 _LINE_SQL = """
-SELECT l.id, l.voice_id, l.lang, l.text, l.category, l.favourite, l.slot, l.source,
+SELECT l.id, l.voice_id, l.lang, l.text, l.category, l.favourite, l.slot, l.source, l.delivery,
        r.id AS render_id, r.gate, r.verified, r.take_no
 FROM lines l LEFT JOIN renders r ON r.id = l.active_render_id
 """
 _BOARD_SQL = _LINE_SQL + " WHERE l.voice_id=? AND l.lang=? ORDER BY l.created, l.rowid"
+
+
+# Database files this process has already migrated, so the board's own columns
+# are checked once per file instead of once per read.
+_migrated: set[str] = set()
 
 
 class LineNotFound(KeyError):
@@ -101,15 +107,32 @@ class BankLine(ValueError):
 
 
 def ensure_columns() -> None:
-    """Add ``favourite``/``slot`` to a ``lines`` table created before M2. The M1
-    schema already has them, so on a fresh database this is a no-op; it exists
-    for a database carried over from an older image."""
-    wanted = {"favourite": "INTEGER NOT NULL DEFAULT 0", "slot": "INTEGER"}
+    """Add the board's own columns to a ``lines`` table that lacks them:
+    ``favourite``/``slot`` (M2) and ``delivery`` (M5). The M1 schema in
+    ``store`` carries the first two, so on a fresh database only ``delivery``
+    is actually added; ``NULL`` there means a bare tile, which is exactly what
+    every line saved before M5 was."""
+    wanted = {"favourite": "INTEGER NOT NULL DEFAULT 0", "slot": "INTEGER", "delivery": "TEXT"}
     with closing(store.db()) as con, con:
         have = {row["name"] for row in con.execute("PRAGMA table_info(lines)")}
         for name, ddl in wanted.items():
             if name not in have:
                 con.execute(f"ALTER TABLE lines ADD COLUMN {name} {ddl}")
+    _migrated.add(str(store.db_path()))
+
+
+def _ready() -> None:
+    """Migrate this database before the board reads or writes it.
+
+    WHY not only at boot: ``delivery`` is the board's column and lives outside
+    ``store.SCHEMA``, so a database made by ``init_db`` alone (the Creator's
+    commit path, a test, a script) has never seen it, and every query here
+    names it. Memoised per database file, so the cost is one set lookup per
+    call and the ALTER is attempted once -- ``ensure_columns`` itself stays
+    unmemoised, because the boot sequence calls it to *check*, not to skip.
+    """
+    if str(store.db_path()) not in _migrated:
+        ensure_columns()
 
 
 def import_bank(path: Path | None = None) -> int:
@@ -163,10 +186,65 @@ def line_status(gate: str | None, verified: bool | int | None) -> str:
     return "ready" if verified else "unverified"
 
 
-def _entry(row: Row) -> dict:
+def voice_for(voice_id: str, cache: dict[str, Voice | None] | None = None) -> Voice | None:
+    """This line's voice, or ``None`` when it cannot be read.
+
+    WHY it may be ``None``: a board read must never 500 because a voice folder
+    was renamed or its ``voice.yaml`` is half-written -- the tiles are still
+    playable, they simply lose the tone they were saved with. Read at call time
+    (never cached across calls) so the Lab disarming a spice shows on the very
+    next board read; ``cache`` is the per-read memo that keeps one board of
+    hundreds of tiles down to a single file read.
+    """
+    if cache is not None and voice_id in cache:
+        return cache[voice_id]
+    try:
+        voice: Voice | None = load_voice(voice_id)
+    except (OSError, KeyError, ValueError, TypeError, yaml.YAMLError):
+        voice = None
+    if cache is not None:
+        cache[voice_id] = voice
+    return voice
+
+
+def _armed(spice_id: str | None, voice: Voice | None) -> bool:
+    """Whether the stored tone is *still* armed for this voice. ``delivery``
+    owns the rule (the Lab's cap included), so this only asks it."""
+    if not spice_id or voice is None:
+        return False
+    try:
+        return delivery.resolve(spice_id, voice) is not None
+    except delivery.NotArmed:
+        return False
+
+
+def line_text(line: dict, voice: Voice | None) -> str:
+    """The text a job for this tile must carry: the stored tone applied, or the
+    bare line when that tone is no longer armed.
+
+    WHY this is the only place the rule lives: three paths turn a tile into a
+    job (a tap through ``POST /api/say``, Regenerate, the boot pre-render) and
+    they must agree, or the pre-render warms a cache key the tap never asks
+    for. WHY it degrades instead of raising: the Lab can disarm a spice between
+    the save and the tap, and silence at the table is worse than a flat line.
+    """
+    spice_id = line.get("delivery")
+    if not spice_id or voice is None:
+        return line["text"]
+    try:
+        return delivery.apply(line["text"], spice_id, voice)
+    except delivery.NotArmed:
+        return line["text"]
+
+
+def _entry(row: Row, cache: dict[str, Voice | None] | None = None) -> dict:
+    spice_id = row["delivery"]
     return {"id": row["id"], "text": row["text"], "category": row["category"],
             "status": line_status(row["gate"], row["verified"]), "render_id": row["render_id"],
-            "favourite": bool(row["favourite"]), "slot": row["slot"]}
+            "favourite": bool(row["favourite"]), "slot": row["slot"],
+            # The stored id even when it is no longer armed: the UI greys it out
+            # rather than silently forgetting the tone the DM picked.
+            "delivery": spice_id, "delivery_armed": _armed(spice_id, voice_for(row["voice_id"], cache))}
 
 
 def _row(con: Connection, line_id: str) -> Row:
@@ -177,8 +255,10 @@ def _row(con: Connection, line_id: str) -> Row:
 
 
 def _lines(voice_id: str, lang: str) -> list[dict]:
+    _ready()
+    cache: dict[str, Voice | None] = {}
     with closing(store.db()) as con:
-        return [_entry(row) for row in con.execute(_BOARD_SQL, (voice_id, lang))]
+        return [_entry(row, cache) for row in con.execute(_BOARD_SQL, (voice_id, lang))]
 
 
 def _signature(lines: list[dict], voice_id: str, lang: str) -> str | None:
@@ -207,19 +287,30 @@ def board(voice_id: str, lang: str) -> dict:
 
 
 def get_line(line_id: str) -> dict:
+    _ready()
     with closing(store.db()) as con:
         return _entry(_row(con, line_id))
 
 
 def set_line(line_id: str, favourite: bool | None = None, slot: int | None = None,
-             category: str | None = None) -> dict:
+             category: str | None = None, delivery: str | None = None) -> dict:
     """Move a tile on the board; ``None`` leaves a field alone. ``slot`` 1-8
     puts the line on that key, evicting whoever held it and starring the line
     (a slot is a favourite with a key); 0 takes it off the row.
     ``favourite=False`` also frees the slot, so the row never shows an
-    unstarred line. Applied in that order, so an unstar wins over a slot."""
+    unstarred line. Applied in that order, so an unstar wins over a slot.
+    ``delivery`` re-tones the tile: an id the Lab armed for this voice,
+    ``"bare"``/``""`` to clear it back to a plain line, and an unknown or
+    unarmed id raises ``NotArmed`` (400) without writing anything -- validated
+    first, inside the same transaction, so a refused tone leaves the whole
+    patch untouched. A tone that really changes also unpins the tile's render
+    (see ``_write_delivery``), so the tile goes back to ``pending`` and the next
+    tap is heard in the new tone."""
+    _ready()
     with closing(store.db()) as con, con:
         row = _row(con, line_id)
+        if delivery is not None:
+            _write_delivery(con, line_id, _checked_delivery(delivery, row["voice_id"]))
         if category is not None:
             con.execute("UPDATE lines SET category=? WHERE id=?", (_clean(category, "category"), line_id))
         if slot is not None:
@@ -240,19 +331,75 @@ def _place(con: Connection, voice_id: str, lang: str, line_id: str, slot: int) -
     con.execute("UPDATE lines SET slot=?, favourite=1 WHERE id=?", (slot, line_id))
 
 
-def add_line(voice_id: str, lang: str, category: str | None, text: str, source: str = "improv") -> dict:
+def _checked_delivery(spice_id: str, voice_id: str) -> str | None:
+    """The delivery id to store for ``voice_id``, or ``None`` to clear it.
+
+    ``"bare"`` and ``""`` clear the column and are answered before the voice is
+    even read, because clearing a tone must work for a voice whose ``voice.yaml``
+    has gone missing -- otherwise a tile could get stuck on a tone it can no
+    longer be talked out of. Everything else must be armed *now*: writing a tone
+    is the DM choosing it, and a choice the Lab never measured is refused loudly
+    (``NotArmed`` -> 400) instead of being rendered bare behind their back.
+    """
+    if not spice_id.strip() or spice_id == delivery.BARE:
+        return None
+    voice = voice_for(voice_id)
+    if voice is None:
+        raise delivery.NotArmed(f"hlas {voice_id!r} nemá voice.yaml, podanie {spice_id!r} nie je overené")
+    spice = delivery.resolve(spice_id, voice)
+    return None if spice is None else spice.id
+
+
+def _write_delivery(con: Connection, line_id: str, spice_id: str | None) -> None:
+    """Store the tile's tone and, when it actually changed, drop its pin.
+
+    WHY the pin goes: a tile's state is nothing but its pinned render's verdict,
+    so a tile that has already rendered reports ``ready`` and the Play page
+    plays that take straight from the cache -- which is the *old* tone, and
+    stays the old tone forever, because ``worker.adopt_render`` only adopts when
+    nothing is pinned. Clearing ``active_render_id`` puts the tile back to
+    ``pending``, which is exactly the state the M5 contract describes, and the
+    next tap renders the toned text and adopts it. Only the pin is dropped: the
+    render row stays in the store, so no known-good take is lost and re-toning
+    back to the previous tone finds its take in the cache.
+
+    Unchanged tones keep their pin, so re-saving a line with the tone it already
+    has (the star on a tile the DM never re-toned) does not throw away a ready
+    tile.
+    """
+    before = con.execute("SELECT delivery FROM lines WHERE id=?", (line_id,)).fetchone()
+    con.execute("UPDATE lines SET delivery=? WHERE id=?", (spice_id, line_id))
+    if before is not None and before["delivery"] != spice_id:
+        con.execute("UPDATE lines SET active_render_id=NULL WHERE id=?", (line_id,))
+
+
+def add_line(voice_id: str, lang: str, category: str | None, text: str, source: str = "improv",
+             delivery: str | None = None) -> dict:
     """Save a line the DM typed (or dictated, scripted, kept from Suggest) into
     the board. It is checked the way the render will check it, so a line that
     can never render (empty, over the spoken-character cap) is refused here
     with the same error instead of failing later on the queue. No category
     means the DM just hit save on something improvised: it lands in
     ``SAVED_CATEGORY`` for the line's language. The id hashes voice+lang+
-    category+text, so saving the same line into the same category twice
-    returns the one tile it already made instead of a duplicate."""
+    category+text and deliberately **not** the delivery, so saving the same
+    text again with another tone re-tones the tile the DM already has instead
+    of growing a second one -- which is what "favourites should remember the
+    tone I picked" asks for, and what keeps this idempotent. ``delivery=None``
+    leaves an existing tile's tone alone (a new tile is bare anyway);
+    ``"bare"`` clears it, which is what the save button sends when the gear
+    says normálne. Validated before anything is written, so a refused tone
+    never leaves a tile behind, and a tone that really changes unpins the tile's
+    render (see ``_write_delivery``) so the next tap is heard in it."""
+    _ready()
     clean = _clean(text, "text")
     canon.canonicalize(clean, lang=lang)
     cat = _clean(category, "category") if category else SAVED_CATEGORY.get(lang, SAVED_CATEGORY["sk"])
-    return get_line(store.upsert_line(voice_id, lang, cat, clean, source))
+    spice_id = None if delivery is None else _checked_delivery(delivery, voice_id)
+    line_id = store.upsert_line(voice_id, lang, cat, clean, source)
+    if delivery is not None:
+        with closing(store.db()) as con, con:
+            _write_delivery(con, line_id, spice_id)
+    return get_line(line_id)
 
 
 def delete_line(line_id: str) -> None:
@@ -260,6 +407,7 @@ def delete_line(line_id: str) -> None:
     the DM's to delete, so it refuses with ``BankLine`` (409); its renders are
     never touched here -- only the board row goes, so an old take already
     played stays in the store under its own render id."""
+    _ready()
     with closing(store.db()) as con, con:
         row = _row(con, line_id)
         if row["source"] == "bank":
@@ -279,6 +427,7 @@ def next_take(line_id: str) -> dict:
     """What a Regenerate job needs: the line's voice and text and the take
     after the pinned one, so the new render climbs a fresh seed ladder under a
     fresh render_id. A line that has never rendered starts at take 0."""
+    _ready()
     with closing(store.db()) as con:
         row = _row(con, line_id)
     take_no = 0 if row["take_no"] is None else int(row["take_no"]) + 1

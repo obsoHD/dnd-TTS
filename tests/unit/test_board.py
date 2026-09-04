@@ -20,7 +20,7 @@ import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import board, canon, config, store
+from app import board, canon, config, delivery, store
 from app.api import board as board_api
 from app.gate import TakeScore
 from app.render import RenderResult
@@ -30,6 +30,24 @@ PHRASES = REPO / "data" / "phrases.json"
 SR = 24_000
 BAG_SK = ["Pozdrav kámoša", "Urážka partie", "Chvastanie po záchrane", "Odmietnutie predmetu",
           "Bojový pokrik", "Sarkastická poznámka", "Namrzené povzbudenie", "Ten nie."]
+# What the Lab writes into voice.yaml once it has measured a spice (M3 contract).
+ARMED = {"vzdych": {"sim_drop": 0.011, "min_sim": 0.918, "n": 20, "armed_at": "2026-09-04T10:00:00Z"},
+         "smiech": {"sim_drop": 0.017, "min_sim": 0.907, "n": 20, "armed_at": "2026-09-04T10:00:00Z"}}
+TONED = "Toto poviem inak."
+PLAIN = "Toto poviem normálne."
+SIGH = "Toto <|sfx:sigh|>poviem inak."
+
+
+def arm(voice_id: str = "bag", armed: dict | None = None) -> None:
+    """Write the minimal voice.yaml ``app.delivery`` reads. Written per test
+    rather than shipped in a fixture file, because half these tests are about
+    what happens when the Lab changes its mind and disarms a spice."""
+    voice_dir = config.voice_dir(voice_id)
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    (voice_dir / "voice.yaml").write_text(
+        yaml.safe_dump({"id": voice_id, "label": voice_id, "lang": "sk",
+                        "armed_spices": ARMED if armed is None else armed},
+                       sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 @pytest.fixture
@@ -224,7 +242,7 @@ def test_add_line_appends_an_improv_tile_and_refuses_what_cannot_render(bank):
     line = board.add_line("bag", "sk", "Urážka partie", "  Ty si   hviezda. ")
     assert line == {"id": store.line_id("bag", "sk", "Urážka partie", "Ty si hviezda."), "text": "Ty si hviezda.",
                     "category": "Urážka partie", "status": "pending", "render_id": None,
-                    "favourite": False, "slot": None}
+                    "favourite": False, "slot": None, "delivery": None, "delivery_armed": False}
     assert board.add_line("bag", "sk", "Urážka partie", "Ty si hviezda.")["id"] == line["id"]
     b = board.board("bag", "sk")
     assert b["lines"][-1] == line and b["categories"] == BAG_SK
@@ -316,14 +334,156 @@ def test_ensure_columns_migrates_a_pre_m2_lines_table(fresh_db):
     with closing(store.db()) as con, con:
         con.execute("ALTER TABLE lines DROP COLUMN favourite")
         con.execute("ALTER TABLE lines DROP COLUMN slot")
+        assert "delivery" not in {row["name"] for row in con.execute("PRAGMA table_info(lines)")}
     board.ensure_columns()
     board.ensure_columns()
     with closing(store.db()) as con:
         cols = {row["name"]: row for row in con.execute("PRAGMA table_info(lines)")}
     assert cols["favourite"]["dflt_value"] == "0" and cols["favourite"]["notnull"] == 1
     assert cols["slot"]["type"] == "INTEGER"
+    # M5: nullable, no default, because every line saved before M5 is a bare line.
+    assert (cols["delivery"]["type"], cols["delivery"]["notnull"], cols["delivery"]["dflt_value"]) == ("TEXT", 0, None)
     board.import_bank(PHRASES)
     assert board.board("bag", "sk")["favourites"][0] is not None
+    assert {line["delivery"] for line in board.board("bag", "sk")["lines"]} == {None}   # the bank ships bare
+
+
+def test_add_line_stores_a_tone_and_a_second_save_retones_the_one_tile(bank):
+    """The ask: a favourite must remember the tone the DM picked. The id hashes
+    the text and not the tone, so re-saving is a re-tone, never a second tile."""
+    arm()
+    toned = board.add_line("bag", "sk", None, TONED, delivery="vzdych")
+    assert (toned["delivery"], toned["delivery_armed"]) == ("vzdych", True)
+    assert toned["id"] == store.line_id("bag", "sk", board.SAVED_CATEGORY["sk"], TONED)
+
+    retoned = board.add_line("bag", "sk", None, TONED, delivery="smiech")
+    assert retoned["id"] == toned["id"] and retoned["delivery"] == "smiech"
+    assert board.add_line("bag", "sk", None, TONED)["delivery"] == "smiech"   # omitted leaves the tone alone
+    assert board.add_line("bag", "sk", None, TONED, delivery="bare")["delivery"] is None
+    assert board.add_line("bag", "sk", None, TONED, delivery="vzdych")["delivery"] == "vzdych"
+    assert board.add_line("bag", "sk", None, TONED, delivery="")["delivery"] is None
+
+    lines = board.board("bag", "sk")["lines"]
+    assert [line["text"] for line in lines].count(TONED) == 1
+    assert lines[-1]["id"] == toned["id"]
+
+
+def test_add_line_refuses_a_tone_the_lab_never_measured(bank):
+    arm(armed={"vzdych": ARMED["vzdych"]})
+    with pytest.raises(delivery.NotArmed):
+        board.add_line("bag", "sk", None, TONED, delivery="smiech")      # a real spice, not armed here
+    with pytest.raises(delivery.NotArmed):
+        board.add_line("bag", "sk", None, TONED, delivery="sepot")       # not a spice at all
+    # refused before the row is written, so no bare tile is left behind
+    assert not any(line["text"] == TONED for line in board.board("bag", "sk")["lines"])
+    assert isinstance(delivery.NotArmed("x"), ValueError)                # what the API turns into a 400
+
+
+def test_add_line_refuses_a_tone_for_a_voice_with_no_voice_yaml(bank):
+    assert board.voice_for("bag") is None
+    with pytest.raises(delivery.NotArmed):
+        board.add_line("bag", "sk", None, TONED, delivery="vzdych")
+    # clearing must still work, or a tile could get stuck on a tone forever
+    assert board.add_line("bag", "sk", None, TONED, delivery="bare")["delivery"] is None
+
+
+def test_set_line_retones_a_tile_and_bare_clears_it(bank):
+    arm()
+    line = board.board("bag", "sk")["lines"][0]
+    assert board.set_line(line["id"], delivery="vzdych")["delivery"] == "vzdych"
+    assert board.get_line(line["id"])["delivery_armed"] is True
+    assert board.set_line(line["id"], favourite=True)["delivery"] == "vzdych"     # None leaves it alone
+    assert board.set_line(line["id"], delivery="smiech", slot=2)["delivery"] == "smiech"
+    assert board.get_line(line["id"])["slot"] == 2
+    assert board.set_line(line["id"], delivery="bare")["delivery"] is None
+    assert board.set_line(line["id"], delivery="")["delivery"] is None
+
+    with pytest.raises(delivery.NotArmed):
+        board.set_line(line["id"], delivery="krik", category="Ina")
+    # the refused patch wrote nothing at all, not even the category beside it
+    assert board.get_line(line["id"])["category"] == line["category"]
+    with pytest.raises(board.LineNotFound):
+        board.set_line("nope", delivery="vzdych")
+
+
+def test_a_real_re_tone_unpins_the_tile_so_the_next_tap_is_heard_in_it(bank):
+    """A ready tile plays its pinned take straight from the cache, and the
+    worker only adopts a render when nothing is pinned. So a re-tone that keeps
+    the pin would leave the DM tapping a tile that answers in the old tone for
+    good; dropping the pin puts it back to pending, which is what M5 promises.
+    The render row itself survives, and an unchanged tone keeps its pin."""
+    arm()
+    line = board.add_line("bag", "sk", None, TONED)
+    rid = pin_render(line["id"], TONED)
+    assert (board.get_line(line["id"])["status"], board.get_line(line["id"])["render_id"]) == ("ready", rid)
+
+    retoned = board.set_line(line["id"], delivery="vzdych")
+    assert (retoned["status"], retoned["render_id"]) == ("pending", None)
+    with closing(store.db()) as con:            # the take is still in the store, only the pin went
+        assert con.execute("SELECT 1 FROM renders WHERE id=?", (rid,)).fetchone() is not None
+
+    again = pin_render(line["id"], SIGH)
+    assert board.set_line(line["id"], delivery="vzdych")["render_id"] == again   # unchanged tone keeps the pin
+    assert board.set_line(line["id"], favourite=True)["render_id"] == again      # and so does an untouched tone
+    assert board.add_line("bag", "sk", None, TONED, delivery="vzdych")["render_id"] == again
+    assert board.add_line("bag", "sk", None, TONED, delivery="smiech")["render_id"] is None
+
+    pin_render(line["id"], TONED, take_no=1)
+    assert board.set_line(line["id"], delivery="bare")["render_id"] is None      # clearing is a change too
+
+
+def test_a_disarmed_tone_stays_on_the_tile_but_reads_as_unarmed(bank):
+    """The Lab re-measures and drops a spice; a tile saved with it keeps showing
+    what the DM chose (the UI greys it), instead of losing it or failing."""
+    arm()
+    line = board.add_line("bag", "sk", None, TONED, delivery="vzdych")
+    arm(armed={"smiech": ARMED["smiech"]})
+    after = board.get_line(line["id"])
+    assert (after["delivery"], after["delivery_armed"]) == ("vzdych", False)
+    assert after == next(row for row in board.board("bag", "sk")["lines"] if row["id"] == line["id"])
+    config.voice_dir("bag").joinpath("voice.yaml").unlink()
+    assert board.get_line(line["id"])["delivery_armed"] is False       # no voice.yaml, nothing armed, no crash
+
+
+def test_line_text_applies_an_armed_tone_and_falls_back_to_the_bare_line(bank):
+    arm()
+    voice = board.voice_for("bag")
+    toned = board.add_line("bag", "sk", None, TONED, delivery="vzdych")
+    bare = board.add_line("bag", "sk", None, PLAIN)
+
+    assert board.line_text(toned, voice) == SIGH
+    assert board.line_text(bare, voice) == PLAIN
+    assert board.line_text(toned, None) == TONED                       # unreadable voice -> the plain line
+    arm(armed={})
+    assert board.line_text(toned, board.voice_for("bag")) == TONED     # disarmed -> the plain line, never an error
+    assert board.voice_for("bag") is not None
+
+
+def test_line_text_is_idempotent_and_leaves_a_typed_token_alone(bank):
+    """``delivery.apply`` owns both rules; this pins that ``line_text`` really
+    routes through it, because the pre-render and the tap must produce the same
+    text byte for byte or they warm and ask for different cache keys."""
+    arm()
+    voice = board.voice_for("bag")
+    toned = board.add_line("bag", "sk", None, TONED, delivery="vzdych")
+    typed = "Toto <|sfx:laughter|>poviem inak."
+    assert board.line_text({**toned, "text": SIGH}, voice) == SIGH
+    assert board.line_text({**toned, "text": typed}, voice) == typed
+
+
+def test_a_tone_moves_neither_the_tile_nor_the_prerender_plan(bank):
+    """The tone belongs to the line, not to the board's shape: order, slots and
+    the T tile may not shift when a tile is re-toned."""
+    arm()
+    before = board.board("bag", "sk")
+    plan = board.prerender_plan("bag", "sk")
+    board.set_line(before["favourites"][0], delivery="vzdych")
+    board.set_line(before["ten_nie"], delivery="smiech")
+    after = board.board("bag", "sk")
+    assert board.prerender_plan("bag", "sk") == plan
+    assert [line["id"] for line in after["lines"]] == [line["id"] for line in before["lines"]]
+    assert (after["favourites"], after["ten_nie"], after["categories"]) == (
+        before["favourites"], before["ten_nie"], before["categories"])
 
 
 class FakeWorker:
@@ -393,3 +553,40 @@ def test_api_regenerate_submits_a_live_job_with_the_next_take(client):
     assert (job.kind, job.priority, job.voice_id, job.text, job.line_id, job.take_no) == (
         "regenerate", "live", "bag", line["text"], line["id"], 2)
     assert client.post("/api/lines/nope/regenerate").status_code == 404
+
+
+def test_api_lines_carry_a_tone_and_refuse_an_unarmed_one(client):
+    arm()
+    created = client.post("/api/lines", json={"voice": "bag", "lang": "sk", "text": TONED, "delivery": "vzdych"})
+    assert created.status_code == 200
+    assert (created.json()["delivery"], created.json()["delivery_armed"]) == ("vzdych", True)
+    line_id = created.json()["id"]
+    assert next(line for line in client.get("/api/board").json()["lines"]
+                if line["id"] == line_id)["delivery"] == "vzdych"
+
+    unarmed = client.post("/api/lines", json={"voice": "bag", "lang": "sk", "text": PLAIN, "delivery": "krik"})
+    assert unarmed.status_code == 400 and "krik" in unarmed.json()["detail"]
+    unknown = client.post("/api/lines", json={"voice": "bag", "lang": "sk", "text": PLAIN, "delivery": "sepot"})
+    assert unknown.status_code == 400
+    assert not any(line["text"] == PLAIN for line in client.get("/api/board").json()["lines"])
+
+    retoned = client.patch(f"/api/lines/{line_id}", json={"delivery": "smiech"})
+    assert retoned.status_code == 200 and retoned.json()["delivery"] == "smiech"
+    assert client.patch(f"/api/lines/{line_id}", json={"delivery": "krik"}).status_code == 400
+    assert client.patch(f"/api/lines/{line_id}", json={"favourite": True}).json()["delivery"] == "smiech"
+    assert client.patch(f"/api/lines/{line_id}", json={"delivery": "bare"}).json()["delivery"] is None
+    assert client.patch("/api/lines/nope", json={"delivery": "vzdych"}).status_code == 404
+
+
+def test_api_regenerate_keeps_the_tiles_tone(client):
+    arm()
+    line_id = client.post("/api/lines",
+                          json={"voice": "bag", "lang": "sk", "text": TONED, "delivery": "vzdych"}).json()["id"]
+    assert client.post(f"/api/lines/{line_id}/regenerate").status_code == 200
+    assert client.app.state.worker.submitted[-1].text == SIGH
+
+    # the Lab disarms it: the tile still regenerates, just flat -- silence at
+    # the table is worse than a flat line
+    arm(armed={})
+    assert client.post(f"/api/lines/{line_id}/regenerate").status_code == 200
+    assert client.app.state.worker.submitted[-1].text == TONED

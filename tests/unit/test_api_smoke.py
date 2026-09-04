@@ -30,7 +30,8 @@ PHRASES = REPO / "data" / "phrases.json"
 SR = 24_000
 JOB_TIMEOUT_S = 5.0
 READYZ_KEYS = {"tts", "tts_warm", "stt", "llm", "speaker", "bank_ready", "queue_depth"}
-LINE_KEYS = {"id", "text", "category", "status", "render_id", "favourite", "slot"}
+LINE_KEYS = {"id", "text", "category", "status", "render_id", "favourite", "slot",
+             "delivery", "delivery_armed"}   # M5: every entry reports its tone and whether it is still armed
 TEXT = "Vy nie ste družina, vy ste kolektívna diagnóza."
 # Counted from the bank, never typed: the population pass grows these files and a
 # hand-written total would go stale the next time a category gains a line.

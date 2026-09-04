@@ -148,6 +148,26 @@ audio { display: none; }
 }
 .del.armed { border-color: var(--red); background: rgba(192, 71, 47, .18); color: #f0a08e; font-size: 11px; font-weight: 700; }
 
+/* A tile that carries a tone names it in the corner; a bare tile shows nothing, so the board stays
+   quiet. A tone the Lab no longer arms is struck through: the tile still plays, flat, and this is
+   the only place the DM can see why it suddenly sounds plain. */
+.tile.toned { padding-bottom: 30px; }
+.tile .tone {
+  position: absolute; left: 8px; bottom: 6px; max-width: 55%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11px; letter-spacing: .2px; color: var(--accent);
+}
+.tile .tone.off { color: var(--muted); text-decoration: line-through; }
+.tile.rendering .tone { left: 28px; }        /* the spinner owns the bottom-left corner while it turns */
+
+/* "tón": the improv bar's spice menu, aimed at this one tile. It hangs upward and right-aligned off
+   the tile's own controls, so it opens over the board instead of past its edge. */
+.retone {
+  height: 28px; padding: 0 8px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--panel2); color: var(--muted); font-size: 12px; line-height: 1;
+}
+.retone.on { border-color: var(--accent); color: var(--accent); }
+.own .dpop { bottom: calc(100% + 8px); left: auto; right: 0; min-width: 180px; max-height: 50vh; }
+
 /* A freshly saved tile flashes twice, so the DM sees which category it landed in. */
 @keyframes flash { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 0 3px var(--accent); } }
 .tile.flash { animation: flash .5s ease-in-out 2; }
@@ -260,6 +280,7 @@ audio { display: none; }
   .tile.tennie { min-height: 72px; }
   .grid { grid-template-columns: 1fr; }
   .del { height: 36px; min-width: 36px; }         /* a finger needs the room; the confirm step guards the rest */
+  .retone { height: 36px; }
   .improv { flex-wrap: wrap; }
   .improv .line { flex-basis: 100%; }
   .improv .count { order: 3; margin-left: auto; }
