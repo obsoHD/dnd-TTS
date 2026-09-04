@@ -133,12 +133,25 @@ def test_chat_request_follows_the_contract(monkeypatch):
     assert body["messages"][1] == {"role": "user", "content": "ten nie kamos"}
 
 
-def test_one_attempt_only(monkeypatch):
-    """An empty answer is not retried: a second roll costs the table 8 s more."""
+def test_a_rejected_answer_is_retried_once_and_no_further(monkeypatch):
+    """A guard rejection is worth one more roll; two rejections end it.
+
+    WHY not more: the DM is mid-scene. Two calls to a resident 27B cost about a
+    second; a third would start being felt at the table.
+    """
     resident(monkeypatch)
     calls = stub_chat(monkeypatch, "   ")
     out = llm.fix(TEXT, make_voice())
-    assert len(calls) == 1 and out["changed"] is False and out["note"]
+    assert len(calls) == llm.ATTEMPTS == 2
+    assert out["changed"] is False and out["note"]
+
+
+def test_a_usable_answer_is_never_re_rolled(monkeypatch):
+    """The retry exists for rejections only: a good line is not gambled away."""
+    resident(monkeypatch)
+    calls = stub_chat(monkeypatch, "Ten nie, kamoš.")
+    out = llm.fix(TEXT, make_voice())
+    assert len(calls) == 1 and out["changed"] is True
 
 
 def test_prompt_is_monolingual_per_language(monkeypatch):

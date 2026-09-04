@@ -37,6 +37,7 @@ _warming = threading.Event()
 TEMPERATURE = 0.3           # a corrector, not an author: the same line twice should come back the same
 NUM_CTX = 4096              # one line plus a persona; a 40k context would waste ~8 GB of VRAM
 MAX_BEATS = 3               # canon caps pause tokens at 3 too, so a fourth beat would be dropped anyway
+ATTEMPTS = 2                # a rejected answer is worth one more roll; a usable one is not
 MIN_RATIO = 0.5
 MAX_RATIO = 2.0
 
@@ -202,22 +203,31 @@ def fix(text: str, voice: Voice, lang: str = "sk") -> dict:
         raise BrainNotReady(config.LLM_MODEL)
     if not text.strip():
         return _unchanged(original, "prázdny text")
-    try:
-        answer = _chat(text, voice, lang)
-    except requests.Timeout:
-        return _unchanged(original, "mozog neodpovedal do 8 sekúnd")
-    except (requests.RequestException, ValueError, TypeError, AttributeError):
-        # A refused socket, a 500 or a body that is not the JSON ollama promises:
-        # none of them may 500 the pencil, the DM's own line still speaks fine.
-        return _unchanged(original, "mozog neodpovedal")
-    return _guard(original, answer, voice, lang)
+    result = _unchanged(original, "mozog neodpovedal")
+    for attempt in range(ATTEMPTS):
+        try:
+            answer = _chat(text, voice, lang)
+        except requests.Timeout:
+            return _unchanged(original, "mozog neodpovedal do 8 sekúnd")
+        except (requests.RequestException, ValueError, TypeError, AttributeError):
+            # A refused socket, a 500 or a body that is not the JSON ollama promises:
+            # none of them may 500 the pencil, the DM's own line still speaks fine.
+            return _unchanged(original, "mozog neodpovedal")
+        result = _guard(original, answer, voice, lang)
+        if result["changed"]:
+            return result
+        log.info("fix attempt %d rejected: %s", attempt + 1, result["note"])
+    return result
 
 
 def _chat(text: str, voice: Voice, lang: str) -> str:
-    """One attempt against ``POST {LLM_URL}/api/chat``. No retry: a second roll
-    of the dice costs the table another 8 s and buys a different sentence, not a
-    better one. ``keep_alive: -1`` keeps the 27B pinned (a cold reload is ~90 s),
-    ``think: false`` stops Qwen3 from spending the answer on a reasoning trace."""
+    """One call against ``POST {LLM_URL}/api/chat``.
+
+    ``fix`` calls this at most ``ATTEMPTS`` times, and only ever again after a
+    guard has *rejected* an answer: re-rolling a usable line would buy a
+    different sentence, not a better one. ``keep_alive: -1`` keeps the 27B
+    pinned (a cold reload is ~90 s), ``think: false`` stops Qwen3 from spending
+    the answer on a reasoning trace."""
     body = {
         "model": config.LLM_MODEL,
         "messages": [{"role": "system", "content": _system(voice, lang)},
