@@ -13,6 +13,7 @@ from app import board
 from app.canon import TooLong
 
 router = APIRouter()
+PREP_KIND = "prep"
 
 
 class NewLine(BaseModel):
@@ -39,13 +40,14 @@ def get_board(voice: str = "bag", lang: str = "sk") -> dict:
 
 
 @router.post("/api/lines")
-def post_line(body: NewLine) -> dict:
+def post_line(body: NewLine, request: Request) -> dict:
     try:
-        return board.add_line(body.voice, body.lang, body.category, body.text, delivery=body.delivery)
+        line = board.add_line(body.voice, body.lang, body.category, body.text, delivery=body.delivery)
     except TooLong as e:
         raise HTTPException(400, "too_long") from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    return _prepare(line, body.voice, request)
 
 
 @router.delete("/api/lines/{line_id}")
@@ -60,14 +62,38 @@ def delete_line(line_id: str) -> dict:
 
 
 @router.patch("/api/lines/{line_id}")
-def patch_line(line_id: str, body: LinePatch) -> dict:
+def patch_line(line_id: str, body: LinePatch, request: Request) -> dict:
     try:
-        return board.set_line(line_id, favourite=body.favourite, slot=body.slot, category=body.category,
+        line = board.set_line(line_id, favourite=body.favourite, slot=body.slot, category=body.category,
                               delivery=body.delivery)
     except board.LineNotFound as e:
         raise HTTPException(404, "line not found") from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    return _prepare(line, board.voice_id_of(line_id), request)
+
+
+def _prepare(line: dict, voice_id: str, request: Request) -> dict:
+    """Queue a tile that has no take yet, at ``prep`` priority.
+
+    WHY: every tile on the board should be ready before it is tapped, whether it
+    came from the bank or the DM saved it thirty seconds ago. ``prep`` sits
+    behind anything the table is waiting for and ahead of the boot backlog. A
+    tile that is already ``ready`` is left alone, so a patch cannot re-render
+    the board, and a missing worker (a test client without one) is skipped: a
+    pre-render that did not happen is not an error the DM should meet on a save.
+    """
+    from app.jobs import new_job
+
+    worker = getattr(request.app.state, "worker", None)
+    if worker is None or line.get("status") == "ready":
+        return line
+    try:
+        text = board.line_text(line, board.voice_for(voice_id))
+    except (FileNotFoundError, KeyError):
+        return line                     # an unlocked or unknown voice has nothing to render with
+    worker.submit(new_job(PREP_KIND, "prep", voice_id, text, line_id=line["id"]))
+    return line
 
 
 @router.post("/api/lines/{line_id}/regenerate")

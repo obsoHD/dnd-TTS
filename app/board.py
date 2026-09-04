@@ -293,6 +293,25 @@ def _signature(lines: list[dict], voice_id: str, lang: str) -> str | None:
     return next((line["id"] for line in lines if line["category"] == category), None)
 
 
+def langs(voice_id: str) -> list[str]:
+    """Every language this voice has lines in, in first-seen order.
+
+    WHY: the boot pre-render walks these so a board flipped to EN mid-scene is
+    already warm instead of rendering a hundred lines while the table waits.
+    """
+    with closing(store.db()) as con:
+        rows = con.execute(
+            "SELECT lang FROM lines WHERE voice_id=? GROUP BY lang ORDER BY MIN(created), MIN(rowid)",
+            (voice_id,)).fetchall()
+    return [row["lang"] for row in rows]
+
+
+def voice_id_of(line_id: str) -> str:
+    """The voice a line belongs to; the API needs it to queue the line's render."""
+    with closing(store.db()) as con:
+        return _row(con, line_id)["voice_id"]
+
+
 def categories(voice_id: str, lang: str) -> list[str]:
     """Categories in bank order; one the DM added lands after the bank's."""
     return list(dict.fromkeys(line["category"] for line in _lines(voice_id, lang)))

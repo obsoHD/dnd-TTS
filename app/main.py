@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from app import config, llm, store, ws
 from app.api import health, renders
 from app.api import voices as voices_api
+from app.voices import Voice
 from app.ws import Hub
 
 log = logging.getLogger("bag.main")
@@ -99,25 +100,43 @@ def _emitter(app: FastAPI) -> Callable[[str, dict], None]:
 
 
 def _enqueue_prerender(app: FastAPI, peers: Peers) -> int:
-    """Queue each locked voice's plan (favourites first: that is the plan's
+    """Queue every locked voice's plan (favourites first: that is the plan's
     order) at ``batch`` priority, skipping lines that are already ``ready`` so a
     warm restart does not flood the queue with instant cache hits. Unlocked
-    voices have no trusted reference and would fail every render."""
+    voices have no trusted reference and would fail every render.
+
+    Every language a voice has lines in, not only its own: a board flipped to EN
+    mid-scene should be warm too. The voice's own language goes first, so the
+    common case fills the queue ahead of the other.
+    """
     queued = 0
     for v in app.state.voices.values():
         if not voices_api.is_locked(v):
             continue
-        lines = {line["id"]: line for line in peers.board.board(v.id, v.lang)["lines"]}
-        for line_id in peers.board.prerender_plan(v.id, v.lang):
-            line = lines.get(line_id)
-            if line is None or line["status"] == "ready":
-                continue
-            # board.line_text, not line["text"]: a tile saved with a tone warms
-            # the cache key that tone hashes to, which is the one the tap asks
-            # for. A tone the Lab has since disarmed falls back to the bare line.
-            app.state.worker.submit(peers.jobs.new_job(
-                PRERENDER_KIND, "batch", v.id, peers.board.line_text(line, v), line_id=line_id))
-            queued += 1
+        for lang in _langs(peers, v):
+            queued += _enqueue_board(app, peers, v, lang)
+    return queued
+
+
+def _langs(peers: Peers, voice: Voice) -> list[str]:
+    """The voice's own language first, then every other it has lines in."""
+    return [voice.lang, *(lang for lang in peers.board.langs(voice.id) if lang != voice.lang)]
+
+
+def _enqueue_board(app: FastAPI, peers: Peers, voice: Voice, lang: str) -> int:
+    """One voice, one language: the plan's order, skipping what is already ready."""
+    lines = {line["id"]: line for line in peers.board.board(voice.id, lang)["lines"]}
+    queued = 0
+    for line_id in peers.board.prerender_plan(voice.id, lang):
+        line = lines.get(line_id)
+        if line is None or line["status"] == "ready":
+            continue
+        # board.line_text, not line["text"]: a tile saved with a tone warms the
+        # cache key that tone hashes to, which is the one the tap asks for. A
+        # tone the Lab has since disarmed falls back to the bare line.
+        app.state.worker.submit(peers.jobs.new_job(
+            PRERENDER_KIND, "batch", voice.id, peers.board.line_text(line, voice), line_id=line_id))
+        queued += 1
     return queued
 
 
